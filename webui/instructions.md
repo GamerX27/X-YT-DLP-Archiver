@@ -279,6 +279,10 @@ You do **not** need to include those.
 | `addmetadata` / `embed-metadata` | Always enabled by the backend — do not set |
 | `writesubtitles` | Adds side-car files — omit unless asked |
 | `embedsubtitles` | Can fail if no subs — omit unless asked |
+| `max_downloads` | **Never set this** — it truncates playlists silently |
+| `playlistend` | **Never set this** — downloads the full playlist always |
+| `playliststart` | **Never set this** — always start from the beginning |
+| `playlist_items` | **Never set this** — let yt-dlp fetch all items |
 
 ### Acceptable defaults to include
 

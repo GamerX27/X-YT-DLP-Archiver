@@ -435,6 +435,17 @@ class Downloader:
             # Hard overrides — LLM cannot change these.
             "keepvideo": False,
         }
+        # Strip any playlist-capping options the LLM may have hallucinated.
+        # Small models like llama3.2:1b sometimes add max_downloads or
+        # playlistend which silently truncates long playlists.
+        for _cap_key in (
+            "max_downloads",
+            "playlistend",
+            "playlist_items",
+            "playliststart",
+            "playlistend",
+        ):
+            opts.pop(_cap_key, None)
         # Always write the thumbnail to disk so _EmbedPP can pick it up.
         # For video it is embedded as MP4 cover art; for audio as ID3 APIC.
         opts["writethumbnail"] = True
@@ -487,10 +498,19 @@ class Downloader:
 
     @staticmethod
     def _cleanup_temp_format_files(directory: Path) -> None:
-        pattern = re.compile(r"\.f\d{2,4}\.[a-zA-Z0-9]{2,4}$")
+        # Remove intermediate muxer files (e.g. filename.f136.mp4)
+        fmt_pattern = re.compile(r"\.f\d{2,4}\.[a-zA-Z0-9]{2,4}$")
         for f in directory.rglob("*"):
-            if f.is_file() and pattern.search(f.name):
+            if f.is_file() and fmt_pattern.search(f.name):
                 logger.info("Removed temp format file: %s", f.name)
+                f.unlink(missing_ok=True)
+        # Remove leftover image files — these are playlist-level thumbnails
+        # that yt-dlp writes but _EmbedPP never embeds (no matching video).
+        # Per-video thumbnails are already deleted by _EmbedPP after embedding.
+        thumb_exts = {".jpg", ".jpeg", ".png", ".webp"}
+        for f in directory.rglob("*"):
+            if f.is_file() and f.suffix.lower() in thumb_exts:
+                logger.info("Removed leftover thumbnail: %s", f.name)
                 f.unlink(missing_ok=True)
 
     # ── Move ─────────────────────────────────────────────────────────────────
