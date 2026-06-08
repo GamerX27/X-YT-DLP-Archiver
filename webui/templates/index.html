@@ -1,0 +1,274 @@
+<!doctype html>
+<html lang="en">
+    <head>
+        <meta charset="UTF-8" />
+        <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+        <title>YT Downloader</title>
+        <link rel="stylesheet" href="/static/css/style.css" />
+    </head>
+    <body>
+        <header>
+            <div class="header-inner">
+                <div class="logo">
+                    <span class="logo-icon">⬇</span>
+                    <span class="logo-text"
+                        >YT <span class="accent">Downloader</span></span
+                    >
+                </div>
+                <div class="header-status">
+                    <span class="status-dot" id="ws-dot"></span>
+                    <span id="ws-label">Connecting…</span>
+                    <span class="model-badge" id="model-badge">Loading…</span>
+                </div>
+            </div>
+        </header>
+
+        <main>
+            <!-- URL Input Card -->
+            <section class="card submit-card">
+                <h2>Add Download</h2>
+                <form id="download-form">
+                    <!-- URL + submit -->
+                    <div class="input-row">
+                        <input
+                            type="url"
+                            id="url-input"
+                            placeholder="Paste a YouTube URL…"
+                            required
+                            autocomplete="off"
+                        />
+                        <button type="submit" id="submit-btn" disabled>
+                            <span class="btn-icon">⬇</span>
+                            Download
+                        </button>
+                    </div>
+
+                    <!-- Video preview strip (shown after successful probe) -->
+                    <div class="probe-info" id="probe-info" hidden>
+                        <span
+                            class="probe-type-icon"
+                            id="probe-type-icon"
+                        ></span>
+                        <div class="probe-info-text">
+                            <span class="probe-title" id="probe-title"></span>
+                            <span
+                                class="probe-channel"
+                                id="probe-channel"
+                            ></span>
+                        </div>
+                        <span class="probe-badge" id="probe-badge"></span>
+                    </div>
+
+                    <!-- Resolution picker -->
+                    <div class="res-area" id="res-area" hidden>
+                        <span class="res-label-text">Quality</span>
+
+                        <span class="res-hint" id="res-hint" hidden></span>
+
+                        <div class="res-probing" id="res-probing" hidden>
+                            <span class="res-spinner"></span>Checking…
+                        </div>
+
+                        <div class="res-buttons" id="res-buttons" hidden>
+                            <button
+                                type="button"
+                                class="res-btn"
+                                data-res="720p"
+                                id="res-btn-720p"
+                            >
+                                <span class="res-main">720p</span>
+                                <span class="res-sub">HD</span>
+                            </button>
+                            <button
+                                type="button"
+                                class="res-btn"
+                                data-res="1080p"
+                                id="res-btn-1080p"
+                            >
+                                <span class="res-main">1080p</span>
+                                <span class="res-sub">Full HD</span>
+                            </button>
+                            <button
+                                type="button"
+                                class="res-btn"
+                                data-res="1440p"
+                                id="res-btn-1440p"
+                            >
+                                <span class="res-main">1440p</span>
+                                <span class="res-sub">QHD</span>
+                            </button>
+                            <button
+                                type="button"
+                                class="res-btn"
+                                data-res="2160p"
+                                id="res-btn-2160p"
+                            >
+                                <span class="res-main">4K</span>
+                                <span class="res-sub">Ultra HD</span>
+                            </button>
+                        </div>
+                        <div class="audio-mode-row" id="audio-mode-row" hidden>
+                            <span class="audio-mode-badge"
+                                >♪ Audio · Best quality MP3</span
+                            >
+                        </div>
+                    </div>
+
+                    <!-- Jellyfin destination (hidden until server confirms Jellyfin is configured) -->
+                    <div class="jellyfin-area" id="jellyfin-area" hidden>
+                        <button
+                            type="button"
+                            class="jellyfin-toggle"
+                            id="jellyfin-toggle"
+                            aria-pressed="false"
+                        >
+                            <img
+                                src="/static/img/jellyfin.svg"
+                                class="jellyfin-icon"
+                                alt="Jellyfin"
+                                aria-hidden="true"
+                            />
+                            <span id="jellyfin-btn-text">Save to Jellyfin</span>
+                            <span class="jellyfin-chevron" id="jellyfin-chevron"
+                                >▾</span
+                            >
+                        </button>
+
+                        <!-- Library picker (expands when toggle is ON) -->
+                        <div
+                            class="jellyfin-picker"
+                            id="jellyfin-picker"
+                            hidden
+                        >
+                            <div
+                                class="jellyfin-picker-grid"
+                                id="jellyfin-picker-grid"
+                            >
+                                <!-- populated by JS -->
+                            </div>
+
+                            <!-- Subfolder browser (shown after a library is selected) -->
+                            <div
+                                class="folder-browser"
+                                id="folder-browser"
+                                hidden
+                            >
+                                <div class="folder-browser-header">
+                                    <button
+                                        class="folder-browser-back"
+                                        id="folder-browser-back"
+                                        hidden
+                                    >
+                                        ◁ Back
+                                    </button>
+                                    <span
+                                        class="folder-browser-path"
+                                        id="folder-browser-path"
+                                    ></span>
+                                    <button
+                                        class="folder-browser-clear"
+                                        id="folder-browser-clear"
+                                    >
+                                        ✕ Use auto folder
+                                    </button>
+                                </div>
+                                <div
+                                    class="folder-browser-grid"
+                                    id="folder-browser-grid"
+                                >
+                                    <!-- populated by JS -->
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <input type="hidden" id="resolution-select" value="" />
+                </form>
+            </section>
+
+            <!-- Active Downloads -->
+            <section class="card" id="active-section">
+                <div class="section-header">
+                    <h2>
+                        Queue
+                        <span class="count-badge" id="active-count">0</span>
+                    </h2>
+                </div>
+                <div id="active-list" class="task-list">
+                    <div class="empty-state" id="active-empty">
+                        No active downloads
+                    </div>
+                </div>
+            </section>
+
+            <!-- Completed -->
+            <section class="card" id="completed-section">
+                <div class="section-header">
+                    <h2>
+                        Completed
+                        <span class="count-badge" id="completed-count">0</span>
+                    </h2>
+                    <button class="btn-ghost" id="clear-completed-btn">
+                        Clear all
+                    </button>
+                </div>
+                <div id="completed-list" class="task-list">
+                    <div class="empty-state" id="completed-empty">
+                        No completed downloads
+                    </div>
+                </div>
+            </section>
+        </main>
+
+        <!-- Task card template -->
+        <template id="task-template">
+            <div class="task-card" data-id="">
+                <div class="task-header">
+                    <div class="task-meta">
+                        <span class="task-channel"></span>
+                        <span class="task-folder folder-chip"></span>
+                        <span class="task-res res-chip" hidden></span>
+                        <span class="task-jf-badge" hidden>
+                            <img
+                                src="/static/img/jellyfin.svg"
+                                class="jellyfin-icon jellyfin-icon--sm"
+                                alt=""
+                                aria-hidden="true"
+                            />
+                            <span class="task-jf-name"></span>
+                        </span>
+                    </div>
+                    <div class="task-actions">
+                        <span class="task-status-badge"></span>
+                        <button class="btn-retry" title="Retry download" hidden>
+                            ↺ Retry
+                        </button>
+                        <button
+                            class="btn-cancel"
+                            title="Cancel download"
+                            hidden
+                        >
+                            ✕ Cancel
+                        </button>
+                        <button class="btn-remove" title="Remove">✕</button>
+                    </div>
+                </div>
+                <div class="task-title"></div>
+                <div class="task-url"></div>
+                <div class="progress-row">
+                    <div class="progress-bar-wrap">
+                        <div class="progress-bar-fill"></div>
+                    </div>
+                    <span class="playlist-counter" hidden></span>
+                    <span class="progress-pct">0%</span>
+                </div>
+                <div class="task-footer">
+                    <span class="task-status-text"></span>
+                    <span class="task-speed"></span>
+                </div>
+            </div>
+        </template>
+
+        <script src="/static/js/app.js"></script>
+    </body>
+</html>

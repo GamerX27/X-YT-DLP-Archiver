@@ -1,0 +1,69 @@
+services:
+  ytdlp-downloader:
+    build:
+      context: ./webui
+    container_name: ytdlp-downloader
+    env_file:
+      - .env
+    volumes:
+      # Ollama model storage — persisted across rebuilds
+      - ollama_models:/root/.ollama
+      # LLM instructions file — edit without rebuilding
+      - ./webui/instructions.md:/app/instructions.md:ro
+      - ./webui/instructions_jellyfin.md:/app/instructions_jellyfin.md:ro
+      - ./webui/instructions_audio.md:/app/instructions_audio.md:ro
+      # Temporary download staging area
+      - downloads_tmp:/app/tmp_downloads
+      # Final media destination on the host
+      - ${MEDIA_PATH:-./media_output}:/media
+      # Jellyfin media root — mounted at the same path so Jellyfin API paths
+      # work directly inside the container without any remapping.
+      # Set JELLYFIN_MEDIA_PATH in .env (e.g. JELLYFIN_MEDIA_PATH=/mnt/Media).
+      # Leave unset or empty to disable (falls back to a harmless tmp mount).
+      - ${JELLYFIN_MEDIA_PATH:-/tmp/jf_noop}:${JELLYFIN_MEDIA_PATH:-/tmp/jf_noop}
+    # host networking — container shares the host's IP and network stack.
+    # This makes yt-dlp appear identical to running it directly on the host,
+    # which avoids YouTube bot-detection that blocks container IPs.
+    # The web UI is still available on http://localhost:3050
+    network_mode: host
+    init: true
+    restart: unless-stopped
+
+    # Health check — Docker marks the container unhealthy if /api/health
+    # stops responding. start_period covers the model pull on first boot.
+    healthcheck:
+      test: ["CMD", "curl", "-sf", "http://localhost:3050/api/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 180s
+
+    # Log rotation — keeps logs from growing unbounded on the host
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "5"
+
+    # ── NVIDIA GPU ────────────────────────────────────────────────────────────
+    # Uncomment the block below to give Ollama access to an NVIDIA GPU.
+    # Requires the NVIDIA Container Toolkit installed on the host.
+    # deploy:
+    #   resources:
+    #     reservations:
+    #       devices:
+    #         - driver: nvidia
+    #           count: all
+    #           capabilities: [gpu]
+
+    # ── AMD ROCm GPU ──────────────────────────────────────────────────────────
+    # Uncomment the lines below for AMD GPU support.
+    # devices:
+    #   - /dev/kfd:/dev/kfd
+    #   - /dev/dri:/dev/dri
+    # group_add:
+    #   - video
+
+volumes:
+  ollama_models:
+  downloads_tmp:

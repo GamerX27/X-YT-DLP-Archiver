@@ -1,0 +1,6 @@
+.env
+media_output/
+__pycache__/
+*.pyc
+*.pyo
+.DS_Store
