@@ -45,6 +45,7 @@ const els = {
   wsDot: () => $("ws-dot"),
   wsLabel: () => $("ws-label"),
   modelBadge: () => $("model-badge"),
+  diskWarning: () => $("disk-warning"),
   activeList: () => $("active-list"),
   activeEmpty: () => $("active-empty"),
   completedList: () => $("completed-list"),
@@ -658,11 +659,30 @@ const connectWs = () => {
 
 // ── Health check ──────────────────────────────────────────────────────────────
 
+const renderDiskWarning = (data) => {
+  const el = els.diskWarning();
+  if (!el) return;
+  if (data && data.disk_low) {
+    const free = Math.max(
+      0,
+      Math.round(((data.disk_free_mb || 0) / 1024) * 10) / 10,
+    );
+    const min = Math.round(((data.disk_min_mb || 0) / 1024) * 10) / 10;
+    el.textContent =
+      `⚠ Low disk space — only ${free} GB free on the download cache drive ` +
+      `(minimum ${min} GB). New downloads will be refused until space is freed.`;
+    el.hidden = false;
+  } else {
+    el.hidden = true;
+  }
+};
+
 const fetchHealth = async () => {
   try {
     const res = await fetch("/api/health");
     const data = await res.json();
     els.modelBadge().textContent = data.ollama_model || "unknown";
+    renderDiskWarning(data);
   } catch {
     els.modelBadge().textContent = "unavailable";
   }
@@ -1059,6 +1079,9 @@ const fetchMonitors = async () => {
 document.addEventListener("DOMContentLoaded", () => {
   connectWs();
   fetchHealth();
+  // Re-check disk space / health periodically so the warning appears and
+  // clears without needing a page reload.
+  setInterval(fetchHealth, 30000);
   setResState("idle");
 
   els.form().addEventListener("submit", handleFormSubmit);

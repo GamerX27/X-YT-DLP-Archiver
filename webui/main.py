@@ -1,4 +1,5 @@
 import asyncio
+import errno
 import json
 import logging
 import os
@@ -44,6 +45,10 @@ logging.getLogger("uvicorn.access").setLevel(logging.WARNING)
 logger = logging.getLogger(__name__)
 
 MAX_CONCURRENT_DOWNLOADS = int(os.getenv("MAX_CONCURRENT_DOWNLOADS", "2"))
+# Refuse to start a download when the staging (cache) drive has less free space
+# than this. Long playlists fill it fast, and a full drive otherwise fails
+# mid-download with a cryptic ENOSPC traceback. Configurable via env.
+MIN_FREE_DISK_MB = int(os.getenv("MIN_FREE_DISK_MB", "2000"))
 MEDIA_DIR = os.getenv(
     "MEDIA_DIR", "/media"
 )  # matches the volume mount in docker-compose
@@ -297,6 +302,28 @@ async def reorder_jellyfin_playlist(dest: Path, agent) -> None:
             logger.warning("utime failed for %s: %s", ep["filename"], exc)
 
 
+def _free_disk_mb(path: Path) -> int:
+    """Free space (MB) on the filesystem holding ``path``; -1 if unknown."""
+    try:
+        return shutil.disk_usage(path).free // (1024 * 1024)
+    except OSError:
+        return -1
+
+
+def _is_disk_full(exc: BaseException) -> bool:
+    """True if an exception (or its chain) is a 'no space left on device' error.
+
+    yt-dlp wraps the underlying ``OSError`` in a ``DownloadError`` whose message
+    still carries the text, so check both the errno and the string form.
+    """
+    seen = exc
+    while seen is not None:
+        if isinstance(seen, OSError) and seen.errno == errno.ENOSPC:
+            return True
+        seen = seen.__cause__ or seen.__context__
+    return "no space left on device" in str(exc).lower()
+
+
 def _count_archive_entries(archive_path: Optional[str]) -> int:
     """Number of video IDs currently recorded in a yt-dlp download archive.
 
@@ -340,6 +367,14 @@ async def _download_with_resume(
         except DownloadCancelled:
             raise
         except Exception as exc:
+            # A full cache drive won't recover by retrying — stop immediately
+            # with a clear message instead of looping until max_passes.
+            if _is_disk_full(exc):
+                free_mb = _free_disk_mb(DOWNLOADS_DIR)
+                raise RuntimeError(
+                    "Download cache drive is full (no space left on device, "
+                    f"{free_mb} MB free). Free up space and retry."
+                ) from exc
             after = _count_archive_entries(archive_file)
             # If this pass still managed to fetch new items before failing,
             # resume on the next pass instead of giving up — the archive
@@ -448,6 +483,22 @@ async def process_task(task_id: str) -> None:
         # Step 3: Download
         if _cancelled():
             return
+
+        # Preflight: refuse to start if the staging drive is already low on
+        # space, so we fail fast with a clear message instead of part-way
+        # through with an ENOSPC error (and a half-written staging dir).
+        free_mb = _free_disk_mb(DOWNLOADS_DIR)
+        if 0 <= free_mb < MIN_FREE_DISK_MB:
+            msg = (
+                f"Not enough free disk space on the download cache drive: "
+                f"{free_mb} MB free, need at least {MIN_FREE_DISK_MB} MB."
+            )
+            logger.error("Task %s — %s", task_id, msg)
+            update_task(
+                task_id, status="failed", status_text=msg, error=msg, progress=0
+            )
+            return
+
         is_audio = task.get("resolution_override") == "audio"
         update_task(task_id, status="downloading", status_text="Downloading…")
 
@@ -577,8 +628,17 @@ async def process_task(task_id: str) -> None:
             )
 
     except Exception as exc:
-        logger.exception("Task %s failed", task_id)
-        update_task(task_id, status="failed", status_text="Failed", error=str(exc))
+        if _is_disk_full(exc):
+            free_mb = _free_disk_mb(DOWNLOADS_DIR)
+            msg = (
+                f"Download cache drive is full (no space left on device, "
+                f"{free_mb} MB free). Free up space and retry."
+            )
+            logger.error("Task %s failed — %s", task_id, msg)
+            update_task(task_id, status="failed", status_text=msg, error=msg)
+        else:
+            logger.exception("Task %s failed", task_id)
+            update_task(task_id, status="failed", status_text="Failed", error=str(exc))
     finally:
         task_abort_events.pop(task_id, None)
 
@@ -892,7 +952,15 @@ async def api_delete_task(task_id: str):
 
 @app.get("/api/health")
 async def api_health():
-    return {"status": "ok", "ollama_model": llm_agent.model}
+    free_mb = _free_disk_mb(DOWNLOADS_DIR)
+    return {
+        "status": "ok",
+        "ollama_model": llm_agent.model,
+        "disk_free_mb": free_mb,
+        "disk_min_mb": MIN_FREE_DISK_MB,
+        # True when there isn't enough room to safely start a new download.
+        "disk_low": 0 <= free_mb < MIN_FREE_DISK_MB,
+    }
 
 
 @app.websocket("/ws")
