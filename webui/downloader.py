@@ -537,13 +537,31 @@ class Downloader:
             else:
                 shutil.move(str(src), str(dest))
 
-        # Fix ownership so the host user can move/delete files without sudo
+        # Fix ownership so the host user can move/delete files without sudo.
         try:
+            # Fix dest and everything inside it.
             for path in dest.rglob("*"):
                 os.chown(path, _PUID, _PGID)
                 path.chmod(0o755 if path.is_dir() else 0o644)
             os.chown(dest, _PUID, _PGID)
             dest.chmod(0o755)
+            # Also fix any parent directories that dest.parent.mkdir() created
+            # as root (e.g. Channel/ or Artist/ layers above the final folder).
+            # Walk upward and chown every directory still owned by root (uid=0).
+            parent = dest.parent
+            while True:
+                try:
+                    if parent.stat().st_uid == 0:
+                        os.chown(str(parent), _PUID, _PGID)
+                        parent.chmod(0o755)
+                        logger.info("Fixed ownership of parent dir: %s", parent)
+                    else:
+                        break  # reached a dir already owned by the right user
+                except Exception:
+                    break
+                if parent == parent.parent:
+                    break
+                parent = parent.parent
         except Exception as exc:
             logger.warning("chown failed (non-fatal): %s", exc)
 
