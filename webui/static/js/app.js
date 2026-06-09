@@ -479,14 +479,13 @@ const renderTask = (task, container) => {
     resChip.hidden = true;
   }
 
-  // Jellyfin badge
+  // Jellyfin badge — show the library's name (e.g. "YT"), not its type.
+  // Falls back to the type only for older tasks that predate name storage.
   const jfBadge = card.querySelector(".task-jf-badge");
   const jfName = jfBadge?.querySelector(".task-jf-name");
   if (task.jellyfin_library_id && jfName) {
-    // Use library path's last segment as short label if name not stored,
-    // but jellyfin_library_type is available as fallback
-    const label = task.jellyfin_library_type || "Jellyfin";
-    jfName.textContent = label;
+    jfName.textContent =
+      task.jellyfin_library_name || task.jellyfin_library_type || "Jellyfin";
     jfBadge.hidden = false;
   } else if (jfBadge) {
     jfBadge.hidden = true;
@@ -695,6 +694,7 @@ const handleFormSubmit = async (e) => {
         url: urlVal,
         resolution_override: selectedRes,
         jellyfin_library_id: selectedJfLibrary?.id ?? null,
+        jellyfin_library_name: selectedJfLibrary?.name ?? null,
         jellyfin_library_path: selectedJfLibrary?.path ?? null,
         jellyfin_library_type: selectedJfLibrary?.type ?? null,
         folder_override: selectedFolderOverride || null,
@@ -772,6 +772,7 @@ const handleRetryClick = async (e) => {
         url: task.url,
         resolution_override: task.resolution_override,
         jellyfin_library_id: task.jellyfin_library_id ?? null,
+        jellyfin_library_name: task.jellyfin_library_name ?? null,
         jellyfin_library_path: task.jellyfin_library_path ?? null,
         jellyfin_library_type: task.jellyfin_library_type ?? null,
         folder_override: task.folder_override ?? null,
@@ -895,8 +896,8 @@ const renderMonitors = () => {
         : m.status === "checking"
           ? "checking…"
           : m.status || "idle";
-    const jfBadge = m.jellyfin_library_type
-      ? `<span class="monitor-jf-badge"><img src="/static/img/jellyfin.svg" class="jellyfin-icon jellyfin-icon--sm" alt=""/> ${m.jellyfin_library_type}</span>`
+    const jfBadge = m.jellyfin_library_id
+      ? `<span class="monitor-jf-badge"><img src="/static/img/jellyfin.svg" class="jellyfin-icon jellyfin-icon--sm" alt=""/> ${m.jellyfin_library_name || m.jellyfin_library_type || "Jellyfin"}</span>`
       : "";
     const archiveInfo =
       m.archive_count != null || m.playlist_count != null
@@ -989,6 +990,7 @@ const handleMonitorFormSubmit = async (e) => {
         schedule_time: document.getElementById("monitor-time").value || "03:00",
         resolution_override: document.getElementById("monitor-res").value,
         jellyfin_library_id: selectedMonitorJfLibrary?.id ?? null,
+        jellyfin_library_name: selectedMonitorJfLibrary?.name ?? null,
         jellyfin_library_path: selectedMonitorJfLibrary?.path ?? null,
         jellyfin_library_type: selectedMonitorJfLibrary?.type ?? null,
       }),

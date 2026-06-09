@@ -11,7 +11,13 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
-from downloader import DOWNLOADS_DIR, DownloadCancelled, Downloader, sanitize_path
+from downloader import (
+    DOWNLOADS_DIR,
+    DownloadCancelled,
+    Downloader,
+    normalize_playlist_url,
+    sanitize_path,
+)
 from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect
 from fastapi.requests import Request
 from fastapi.responses import JSONResponse
@@ -160,6 +166,7 @@ async def run_monitor(monitor: Dict[str, Any]) -> None:
         "final_path": None,
         "resolution_override": monitor.get("resolution_override", "1080p"),
         "jellyfin_library_id": monitor.get("jellyfin_library_id"),
+        "jellyfin_library_name": monitor.get("jellyfin_library_name"),
         "jellyfin_library_path": monitor.get("jellyfin_library_path"),
         "jellyfin_library_type": monitor.get("jellyfin_library_type"),
         "folder_override": monitor.get("folder_override"),
@@ -274,6 +281,11 @@ async def process_task(task_id: str) -> None:
         # Step 1: Probe
         if _cancelled():
             return
+        resolved_url = normalize_playlist_url(task["url"])
+        if resolved_url != task["url"]:
+            logger.info("Task %s — using full playlist URL: %s", task_id, resolved_url)
+        else:
+            logger.info("Task %s — starting: %s", task_id, resolved_url)
         update_task(task_id, status="probing", status_text="Probing URL…")
         metadata = await downloader.probe_url(task["url"])
         title = metadata.get("title") or task["url"]
@@ -507,6 +519,7 @@ class DownloadRequest(BaseModel):
     url: str
     resolution_override: Optional[str] = None
     jellyfin_library_id: Optional[str] = None
+    jellyfin_library_name: Optional[str] = None
     jellyfin_library_path: Optional[str] = None
     jellyfin_library_type: Optional[str] = None
     folder_override: Optional[str] = (
@@ -629,6 +642,7 @@ async def api_download(body: DownloadRequest):
         "final_path": None,
         "resolution_override": body.resolution_override,
         "jellyfin_library_id": body.jellyfin_library_id,
+        "jellyfin_library_name": body.jellyfin_library_name,
         "jellyfin_library_path": body.jellyfin_library_path,
         "jellyfin_library_type": body.jellyfin_library_type,
         "folder_override": body.folder_override,
@@ -655,6 +669,7 @@ class MonitorRequest(BaseModel):
     schedule_time: str = "03:00"
     resolution_override: Optional[str] = "1080p"
     jellyfin_library_id: Optional[str] = None
+    jellyfin_library_name: Optional[str] = None
     jellyfin_library_path: Optional[str] = None
     jellyfin_library_type: Optional[str] = None
     folder_override: Optional[str] = None
@@ -686,6 +701,7 @@ async def api_add_monitor(body: MonitorRequest):
             "schedule_time": body.schedule_time,
             "resolution_override": body.resolution_override,
             "jellyfin_library_id": body.jellyfin_library_id,
+            "jellyfin_library_name": body.jellyfin_library_name,
             "jellyfin_library_path": body.jellyfin_library_path,
             "jellyfin_library_type": body.jellyfin_library_type,
             "folder_override": body.folder_override,

@@ -8,6 +8,7 @@ import threading
 import time
 from pathlib import Path
 from typing import Any, Callable, Dict, Optional
+from urllib.parse import parse_qs, urlencode, urlparse
 
 import yt_dlp
 from yt_dlp.postprocessor.common import PostProcessor
@@ -45,6 +46,59 @@ class DownloadCancelled(Exception):
 # so they can be moved/deleted on the host without sudo.
 _PUID = int(os.getenv("PUID", "1000"))
 _PGID = int(os.getenv("PGID", "1000"))
+
+
+# YouTube "list" IDs that are dynamically generated mixes/radios. These have
+# no standalone playlist page, so they must NOT be rewritten to /playlist —
+# doing so would make yt-dlp fail to resolve them.
+_NON_BROWSABLE_LIST_PREFIXES = ("RD", "UL", "MM")
+
+
+def normalize_playlist_url(url: str) -> str:
+    """Rewrite a YouTube *watch* URL that carries a ``list=`` parameter into the
+    canonical ``/playlist?list=<id>`` form.
+
+    A ``watch?v=...&list=...`` URL makes yt-dlp extract the playlist from the
+    *watch page's* side panel, which YouTube hard-caps at ~100 entries for
+    anyone who is not the playlist owner. That is why a 181-video playlist
+    silently stops at 100 — and why ``lazy_playlist=False`` cannot help: the
+    watch page never exposes the remaining continuation pages at all.
+
+    The dedicated playlist tab (``/playlist?list=<id>``) returns *every* entry,
+    so for real (browsable) playlists we redirect to it. Mixes/radios (``RD``…,
+    which have no static page) are left untouched.
+    """
+    try:
+        parsed = urlparse(url)
+    except Exception:
+        return url
+
+    host = (parsed.hostname or "").lower()
+    if not (host.endswith("youtube.com") or host == "youtu.be"):
+        return url
+
+    list_ids = parse_qs(parsed.query).get("list")
+    if not list_ids:
+        return url
+    list_id = list_ids[0]
+
+    # Already a bare playlist URL (or a mix/radio that has no static page).
+    if parsed.path.rstrip("/").endswith("/playlist"):
+        return url
+    if any(list_id.startswith(prefix) for prefix in _NON_BROWSABLE_LIST_PREFIXES):
+        return url
+
+    new_host = (
+        "music.youtube.com" if host.endswith("music.youtube.com") else "www.youtube.com"
+    )
+    new_url = f"https://{new_host}/playlist?{urlencode({'list': list_id})}"
+    logger.info(
+        "Normalized watch+list URL to full playlist URL so all entries are "
+        "fetched (watch-page panels are capped at ~100): %s\u2002\u2192\u2002%s",
+        url,
+        new_url,
+    )
+    return new_url
 
 
 def sanitize_path(name: str) -> str:
@@ -336,6 +390,9 @@ class Downloader:
     # ── Probe ────────────────────────────────────────────────────────────────
 
     async def probe_url(self, url: str) -> Dict[str, Any]:
+        # Use the full playlist tab instead of a capped watch-page panel so the
+        # reported playlist_count matches what will actually be downloaded.
+        url = normalize_playlist_url(url)
         opts = {
             "quiet": True,
             "no_warnings": True,
@@ -372,6 +429,11 @@ class Downloader:
         abort_event: Optional[threading.Event] = None,
         is_audio: bool = False,
     ) -> Path:
+        # A watch?v=...&list=... URL only exposes the watch-page playlist panel
+        # (capped at ~100 entries). Rewrite it to the full playlist tab so every
+        # entry is downloaded.
+        url = normalize_playlist_url(url)
+
         dest = DOWNLOADS_DIR / task_id
         dest.mkdir(parents=True, exist_ok=True)
 
@@ -441,11 +503,14 @@ class Downloader:
         for _cap_key in (
             "max_downloads",
             "playlistend",
-            "playlist_items",
             "playliststart",
-            "playlistend",
         ):
             opts.pop(_cap_key, None)
+        # Force yt-dlp to fetch ALL playlist pages before processing.
+        # With lazy_playlist=True (default in newer yt-dlp), the YouTube
+        # extractor only returns the first API page (100 items) as a list.
+        # Setting lazy_playlist=False loads all pages eagerly upfront.
+        opts["lazy_playlist"] = False
         # Always write the thumbnail to disk so _EmbedPP can pick it up.
         # For video it is embedded as MP4 cover art; for audio as ID3 APIC.
         opts["writethumbnail"] = True
