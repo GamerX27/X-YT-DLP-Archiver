@@ -118,47 +118,32 @@ def sanitize_info(info: Dict[str, Any]) -> Dict[str, Any]:
     return clean
 
 
-def _upload_date_to_metric(upload_date: Optional[str]) -> str:
-    """
-    Convert yt-dlp's YYYYMMDD → DD.MM.YYYY (e.g. '20240529' → '29.05.2024').
-    Also accepts YYYY-MM-DD (ISO) as a fallback input format.
-    Returns '' if the value is absent or unrecognised.
+def _upload_date_to_iso(upload_date: Optional[str]) -> str:
+    """yt-dlp YYYYMMDD (or already-ISO) → 'YYYY-MM-DD'. '' if unrecognised.
+
+    ISO is what Jellyfin parses reliably; the older DD.MM.YYYY form was parsed
+    inconsistently, which is why some videos showed a year and others didn't.
     """
     if not upload_date:
         return ""
     s = upload_date.strip()
     if len(s) == 8 and s.isdigit():
-        return f"{s[6:]}.{s[4:6]}.{s[:4]}"
+        return f"{s[:4]}-{s[4:6]}-{s[6:]}"
     if re.match(r"^\d{4}-\d{2}-\d{2}$", s):
-        yyyy, mm, dd = s.split("-")
-        return f"{dd}.{mm}.{yyyy}"
+        return s
     return ""
 
 
-def _timestamp_to_metric(ts: Any) -> str:
-    """Convert a Unix timestamp (int/float) → DD.MM.YYYY."""
+def _timestamp_to_iso(ts: Any) -> str:
+    """Unix timestamp (int/float) → 'YYYY-MM-DD'. '' if absent/invalid."""
     if not ts:
         return ""
     try:
         from datetime import datetime, timezone
 
-        return datetime.fromtimestamp(float(ts), tz=timezone.utc).strftime("%d.%m.%Y")
+        return datetime.fromtimestamp(float(ts), tz=timezone.utc).strftime("%Y-%m-%d")
     except Exception:
         return ""
-
-
-def _upload_date_as_datetime(upload_date: Optional[str]) -> Optional[Any]:
-    """Return a datetime for the YYYYMMDD string, or None."""
-    if not upload_date or len(upload_date) != 8 or not upload_date.isdigit():
-        return None
-    try:
-        from datetime import datetime
-
-        return datetime(
-            int(upload_date[:4]), int(upload_date[4:6]), int(upload_date[6:])
-        )
-    except ValueError:
-        return None
 
 
 class _EmbedPP(PostProcessor):
@@ -293,18 +278,20 @@ class _EmbedPP(PostProcessor):
             # Upload date
             # yt-dlp stores YYYYMMDD in info['upload_date'] (may be None even if
             # the key exists).  Fall back to the Unix timestamp when absent.
+            # Embed as ISO YYYY-MM-DD so Jellyfin parses the year reliably, and
+            # keep the file mtime in sync with the SAME date below.
             raw_date: Optional[str] = info.get("upload_date") or None
-            date_metric = _upload_date_to_metric(raw_date)
-            if not date_metric:
-                date_metric = _timestamp_to_metric(info.get("timestamp"))
+            date_iso = _upload_date_to_iso(raw_date) or _timestamp_to_iso(
+                info.get("timestamp")
+            )
             logger.info(
-                "upload_date raw=%r  →  metric=%r  (file: %s)",
+                "upload_date raw=%r  →  iso=%r  (file: %s)",
                 raw_date,
-                date_metric,
+                date_iso,
                 path.name,
             )
-            if date_metric:
-                tags["\xa9day"] = [date_metric]
+            if date_iso:
+                tags["\xa9day"] = [date_iso]
 
             # Description
             description = info.get("description") or ""
@@ -314,15 +301,21 @@ class _EmbedPP(PostProcessor):
             video.save()
             logger.info("Embedded metadata+thumbnail → %s", path.name)
 
-            # Set the file's modification time to the upload date so file
-            # managers and media servers show the correct "creation date".
-            dt = _upload_date_as_datetime(raw_date)
-            if dt is not None:
+            # Set the file's modification time to the SAME date that was
+            # embedded above, so file managers and Jellyfin show a consistent
+            # date. Uses the timestamp fallback too (the old code only set the
+            # mtime when a YYYYMMDD upload_date existed, so videos exposing only
+            # a timestamp kept their download date — a source of wrong years).
+            if date_iso:
                 import os as _os
+                from datetime import datetime as _dt
 
-                ts = dt.timestamp()
-                _os.utime(str(path), (ts, ts))
-                logger.info("Set mtime of %s → %s", path.name, dt.date())
+                try:
+                    ts = _dt.strptime(date_iso, "%Y-%m-%d").timestamp()
+                    _os.utime(str(path), (ts, ts))
+                    logger.info("Set mtime of %s → %s", path.name, date_iso)
+                except ValueError:
+                    pass
 
         except Exception as exc:
             logger.warning("mutagen embed failed for %s: %s", path.name, exc)
@@ -387,7 +380,41 @@ class _EmbedPP(PostProcessor):
 
 
 class Downloader:
-    # ── Probe ────────────────────────────────────────────────────────────────
+    # ── Date helpers ───────────────────────────────────────────────────────
+
+    @staticmethod
+    def set_video_date(path: Path, iso_date: str) -> None:
+        """Set both the embedded date tag and the file mtime of an MP4 to
+        ``iso_date`` (YYYY-MM-DD).
+
+        Used by the Jellyfin reorder step so the date Jellyfin displays and the
+        date it sorts by always agree — previously the reorder rewrote only the
+        mtime, leaving the embedded tag at a different value. No-op on failure.
+        """
+        try:
+            from datetime import datetime
+
+            ts = datetime.strptime(iso_date, "%Y-%m-%d").timestamp()
+        except ValueError:
+            return
+        try:
+            from mutagen.mp4 import MP4
+
+            video = MP4(str(path))
+            if video.tags is None:
+                video.add_tags()
+            video.tags["\xa9day"] = [iso_date]
+            video.save()
+        except Exception as exc:
+            # Non-MP4 containers (mkv/webm) can't hold this tag — the mtime
+            # below still keeps ordering correct.
+            logger.warning("Could not update embedded date for %s: %s", path.name, exc)
+        try:
+            os.utime(str(path), (ts, ts))
+        except OSError as exc:
+            logger.warning("Could not set mtime for %s: %s", path.name, exc)
+
+    # ── Probe ─────────────────────────────────────────────────────────────
 
     async def probe_url(self, url: str) -> Dict[str, Any]:
         # Use the full playlist tab instead of a capped watch-page panel so the

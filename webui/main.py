@@ -106,6 +106,15 @@ def _active_task_for_url(url: str) -> Optional[Dict[str, Any]]:
     return None
 
 
+def _monitor_for_url(url: str) -> Optional[Dict[str, Any]]:
+    """Return a monitor watching the same playlist as ``url``, if any."""
+    target = normalize_playlist_url(url)
+    for monitor in monitor_store.all():
+        if normalize_playlist_url(monitor.get("url", "")) == target:
+            return monitor
+    return None
+
+
 def _archive_count(monitor: Dict[str, Any]) -> int:
     """
     Count how many video IDs are in the download archive for this monitor.
@@ -293,13 +302,10 @@ async def reorder_jellyfin_playlist(dest: Path, agent) -> None:
         new_date = date_map.get(ep["filename"])
         if not new_date:
             continue
-        try:
-            dt = datetime.strptime(new_date, "%Y-%m-%d")
-            ts = dt.timestamp()
-            os.utime(ep["_path"], (ts, ts))
-            logger.info("Jellyfin reorder: %s → %s", ep["filename"], new_date)
-        except Exception as exc:
-            logger.warning("utime failed for %s: %s", ep["filename"], exc)
+        # Update the embedded date tag AND the mtime together so Jellyfin's
+        # displayed date and its sort order stay consistent.
+        downloader.set_video_date(ep["_path"], new_date)
+        logger.info("Jellyfin reorder: %s → %s", ep["filename"], new_date)
 
 
 def _free_disk_mb(path: Path) -> int:
@@ -463,22 +469,42 @@ async def process_task(task_id: str) -> None:
                 plan["output_template"] = "%(title)s.%(ext)s"
             update_task(task_id, folder=plan["folder_path"])
 
-        # For playlists: set up a persistent download archive in the destination
-        # folder so yt-dlp can skip videos that were already downloaded on
-        # previous runs of the same playlist.
+        # For playlists: use a persistent download archive so yt-dlp skips
+        # videos already downloaded on previous runs of the same playlist.
+        #
+        # The persistent archive lives in the DESTINATION folder, but we only
+        # commit IDs to it AFTER their files have actually been moved there.
+        # Videos download into a temporary staging dir first; if the run fails
+        # between download and move (e.g. the cache drive fills up), writing the
+        # archive directly in the destination would record IDs whose files never
+        # arrived — permanently skipping those episodes on the next run. So
+        # during the download we use a *staging* archive seeded from the
+        # persistent one, and commit it only on success (see after the move).
+        dest_archive: Optional[Path] = None
+        staging_archive: Optional[Path] = None
         if plan.get("content_type") == "playlist":
             jf_path_for_archive = task.get("jellyfin_library_path")
             archive_base = Path(
                 jf_path_for_archive if jf_path_for_archive else MEDIA_DIR
             )
-            archive_dir = archive_base / plan.get("folder_path", "")
+            dest_archive = (
+                archive_base / plan.get("folder_path", "") / ".yt-dlp-archive"
+            )
+            staging_archive = DOWNLOADS_DIR / task_id / ".yt-dlp-archive"
             try:
-                archive_dir.mkdir(parents=True, exist_ok=True)
-                archive_file = archive_dir / ".yt-dlp-archive"
-                plan["extra_opts"]["download_archive"] = str(archive_file)
-                logger.info("Playlist download archive: %s", archive_file)
+                staging_archive.parent.mkdir(parents=True, exist_ok=True)
+                # Seed the staging archive with everything already in the
+                # destination so we don't re-download completed episodes.
+                if dest_archive.exists():
+                    shutil.copyfile(dest_archive, staging_archive)
+                plan["extra_opts"]["download_archive"] = str(staging_archive)
+                logger.info(
+                    "Playlist archive: staging=%s commits to %s after move",
+                    staging_archive,
+                    dest_archive,
+                )
             except Exception as exc:
-                logger.warning("Could not create archive dir (non-fatal): %s", exc)
+                logger.warning("Could not set up download archive (non-fatal): %s", exc)
 
         # Step 3: Download
         if _cancelled():
@@ -569,11 +595,30 @@ async def process_task(task_id: str) -> None:
             status_text=f"Moving to {'Jellyfin' if jellyfin_path else 'media'} folder…",
             progress=100,
         )
+
+        # Snapshot the staging archive before the move (which deletes the
+        # staging dir). We commit it to the destination only after the move
+        # succeeds, so the archive can never get ahead of the files on disk.
+        archive_snapshot: Optional[str] = None
+        if staging_archive is not None and staging_archive.exists():
+            try:
+                archive_snapshot = staging_archive.read_text(encoding="utf-8")
+            except OSError:
+                archive_snapshot = None
+
         final_dest = await downloader.move_to_media(
             task_dir=task_dir,
             folder_path=plan.get("folder_path", "Downloads"),
             media_dir=dest_dir,
         )
+
+        # Commit the archive now that the files are actually in the destination.
+        if archive_snapshot is not None and dest_archive is not None:
+            try:
+                dest_archive.parent.mkdir(parents=True, exist_ok=True)
+                dest_archive.write_text(archive_snapshot, encoding="utf-8")
+            except OSError as exc:
+                logger.warning("Could not commit download archive (non-fatal): %s", exc)
 
         # Trigger Jellyfin library scan after move
         jf_lib_id = task.get("jellyfin_library_id")
@@ -810,6 +855,31 @@ async def api_download(body: DownloadRequest):
         raise HTTPException(
             status_code=409,
             detail="This playlist is already downloading.",
+        )
+
+    # If this playlist is already watched by a monitor, route the download to
+    # the monitor's destination so the same playlist can't diverge into two
+    # folders/archives (one under the Jellyfin library, one under MEDIA_DIR).
+    # The user's explicit choices in the form still take precedence.
+    monitor = _monitor_for_url(body.url)
+    if monitor is not None:
+        if not body.jellyfin_library_id and monitor.get("jellyfin_library_id"):
+            body.jellyfin_library_id = monitor.get("jellyfin_library_id")
+            body.jellyfin_library_name = monitor.get("jellyfin_library_name")
+            body.jellyfin_library_path = monitor.get("jellyfin_library_path")
+            body.jellyfin_library_type = monitor.get("jellyfin_library_type")
+        if not body.folder_override:
+            # Prefer the exact folder the monitor has been writing to so the
+            # archive lines up; fall back to its configured override.
+            body.folder_override = monitor.get("monitor_folder_path") or monitor.get(
+                "folder_override"
+            )
+        if not body.resolution_override and monitor.get("resolution_override"):
+            body.resolution_override = monitor.get("resolution_override")
+        logger.info(
+            "Manual download for %s matched monitor %s; routing to its destination",
+            body.url,
+            monitor["id"],
         )
 
     task_id = str(uuid.uuid4())
