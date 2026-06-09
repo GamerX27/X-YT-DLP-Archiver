@@ -220,13 +220,30 @@ h2 {
         box-shadow 0.2s ease;
 }
 
-#url-input::placeholder {
+#url-input::placeholder,
+#monitor-url::placeholder {
     color: var(--text-dim);
 }
 
-#url-input:focus {
+#url-input:focus,
+#monitor-url:focus {
     border-color: var(--accent);
     box-shadow: 0 0 0 3px var(--accent-glow);
+}
+
+#monitor-url {
+    flex: 1;
+    background: var(--bg-input);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+    padding: 10px 14px;
+    color: var(--text);
+    font-size: 0.95rem;
+    outline: none;
+    width: 100%;
+    transition:
+        border-color 0.2s ease,
+        box-shadow 0.2s ease;
 }
 
 /* ── Probe info strip ──────────────────────────────────── */
@@ -1217,33 +1234,42 @@ h2 {
    ============================================================ */
 .tab-nav {
     display: flex;
-    gap: 2px;
-    border-bottom: 1px solid var(--border);
-    margin-bottom: 16px;
+    gap: 0;
+    margin-bottom: 24px;
+    border-bottom: 2px solid var(--border);
 }
 
 .tab-btn {
     background: none;
     border: none;
-    border-bottom: 2px solid transparent;
+    border-bottom: 3px solid transparent;
+    margin-bottom: -2px;
     color: var(--text-muted);
     cursor: pointer;
-    font-size: 0.9rem;
+    font-size: 0.95rem;
     font-weight: 500;
-    padding: 8px 18px;
-    margin-bottom: -1px;
+    padding: 10px 22px;
     transition:
-        color 0.15s,
-        border-color 0.15s;
+        color 0.15s ease,
+        border-color 0.15s ease,
+        background 0.15s ease;
 }
 
-.tab-btn:hover {
+.tab-btn:hover:not(.active) {
     color: var(--text);
+    background: rgba(255, 255, 255, 0.03);
 }
 
-.tab-btn.active {
+/* Downloads tab — blue */
+.tab-btn[data-tab="downloads"].active {
     color: var(--accent);
     border-bottom-color: var(--accent);
+}
+
+/* Monitor tab — orange */
+.tab-btn[data-tab="monitor"].active {
+    color: var(--warning);
+    border-bottom-color: var(--warning);
 }
 
 /* ============================================================
@@ -1359,6 +1385,55 @@ h2 {
     font-weight: 600;
 }
 
+/* Monitor inline download progress */
+.monitor-dl-progress {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    padding: 6px 0 2px;
+}
+
+.monitor-dl-bar-wrap {
+    height: 4px;
+    background: var(--progress-track);
+    border-radius: 2px;
+    overflow: hidden;
+}
+
+.monitor-dl-bar-fill {
+    height: 100%;
+    background: var(--accent);
+    border-radius: 2px;
+    transition: width 0.3s ease;
+}
+
+.monitor-dl-bar-fill.indeterminate {
+    width: 40% !important;
+    animation: indeterminate-slide 1.4s ease-in-out infinite;
+}
+
+@keyframes indeterminate-slide {
+    0% {
+        transform: translateX(-150%);
+    }
+    100% {
+        transform: translateX(350%);
+    }
+}
+
+.monitor-dl-text {
+    font-size: 0.75rem;
+    color: var(--text-muted);
+}
+
+.monitor-archive {
+    color: var(--text-muted);
+    background: rgba(255, 255, 255, 0.05);
+    padding: 1px 6px;
+    border-radius: 3px;
+    font-variant-numeric: tabular-nums;
+}
+
 /* Monitor form */
 .monitor-options {
     display: flex;
@@ -1389,14 +1464,14 @@ h2 {
     cursor: pointer;
 }
 
-.monitor-time-input {
+.monitor-field-select {
     background: var(--bg-input);
     border: 1px solid var(--border);
     color: var(--text);
     border-radius: var(--radius-sm);
     padding: 5px 8px;
     font-size: 0.82rem;
-    width: 90px;
+    cursor: pointer;
 }
 
 .btn-primary {

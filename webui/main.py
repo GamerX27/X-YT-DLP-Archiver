@@ -11,7 +11,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
-from downloader import DOWNLOADS_DIR, DownloadCancelled, Downloader
+from downloader import DOWNLOADS_DIR, DownloadCancelled, Downloader, sanitize_path
 from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect
 from fastapi.requests import Request
 from fastapi.responses import JSONResponse
@@ -74,12 +74,73 @@ def update_task(task_id: str, **kwargs) -> None:
     asyncio.ensure_future(broadcast({"type": "task_update", "task": tasks[task_id]}))
 
 
+def _archive_count(monitor: Dict[str, Any]) -> int:
+    """
+    Count how many video IDs are in the download archive for this monitor.
+    Returns 0 if the archive doesn't exist yet.
+    """
+    dest_base = monitor.get("jellyfin_library_path") or MEDIA_DIR
+
+    # Use the stored folder_path if available (set after first download).
+    # Fall back to an estimate using channel + playlist name.
+    folder = monitor.get("monitor_folder_path")
+    if not folder:
+        channel = sanitize_path(monitor.get("channel") or "")
+        name = sanitize_path(monitor.get("name") or "")
+        if channel and name:
+            folder = f"{channel}/{name}"
+        elif name:
+            folder = name
+        else:
+            return 0
+
+    archive = Path(dest_base) / folder / ".yt-dlp-archive"
+    try:
+        if archive.exists():
+            lines = [
+                l for l in archive.read_text(encoding="utf-8").splitlines() if l.strip()
+            ]
+            return len(lines)
+    except Exception:
+        pass
+    return 0
+
+
 async def run_monitor(monitor: Dict[str, Any]) -> None:
-    """Enqueue a download task for a monitor; archive ensures only new videos."""
+    """Check for new videos and enqueue a download task if the playlist has grown."""
     monitor_id = monitor["id"]
     monitor_store.set_status(monitor_id, "checking")
     await broadcast({"type": "monitors_update", "monitors": monitor_store.all()})
 
+    # ── Step 1: probe the playlist to get its current total count ─────────────
+    playlist_count = 0
+    try:
+        meta = await downloader.probe_url(monitor["url"])
+        playlist_count = meta.get("playlist_count") or 0
+    except Exception as exc:
+        logger.warning("Monitor %s probe failed: %s", monitor_id, exc)
+
+    # ── Step 2: check how many are already in the download archive ────────────
+    archive_count = _archive_count(monitor)
+
+    monitor_store.update(
+        monitor_id,
+        playlist_count=playlist_count,
+        archive_count=archive_count,
+    )
+    await broadcast({"type": "monitors_update", "monitors": monitor_store.all()})
+
+    # ── Step 3: skip if nothing new ───────────────────────────────────────────
+    if playlist_count > 0 and archive_count >= playlist_count:
+        logger.info(
+            "Monitor %s up-to-date (%d/%d)", monitor_id, archive_count, playlist_count
+        )
+        monitor_store.set_status(monitor_id, "up-to-date")
+        monitor_store.mark_ran(monitor_id, new_videos=0)
+        await broadcast({"type": "monitors_update", "monitors": monitor_store.all()})
+        return
+
+    # ── Step 4: enqueue a download task ──────────────────────────────────────
     task_id = str(uuid.uuid4())
     task = {
         "id": task_id,
@@ -108,7 +169,13 @@ async def run_monitor(monitor: Dict[str, Any]) -> None:
     tasks[task_id] = task
     await task_queue.put(task_id)
     await broadcast({"type": "task_update", "task": task})
-    logger.info("Monitor %s enqueued task %s", monitor_id, task_id)
+    logger.info(
+        "Monitor %s enqueued task %s (%d in archive, %d in playlist)",
+        monitor_id,
+        task_id,
+        archive_count,
+        playlist_count,
+    )
 
 
 async def monitor_scheduler() -> None:
@@ -357,6 +424,23 @@ async def process_task(task_id: str) -> None:
             final_path=str(final_dest),
             progress=100,
         )
+
+        # If triggered by a monitor, record the exact folder_path used so
+        # future archive checks know exactly where to look.
+        if task.get("monitor_id"):
+            _mon = monitor_store.get(task["monitor_id"]) or {}
+            fresh_count = _archive_count(
+                {**_mon, "monitor_folder_path": plan.get("folder_path")}
+            )
+            monitor_store.update(
+                task["monitor_id"],
+                monitor_folder_path=plan.get("folder_path"),
+                archive_count=fresh_count,
+                last_new_videos=max(0, fresh_count - _mon.get("archive_count", 0)),
+            )
+            await broadcast(
+                {"type": "monitors_update", "monitors": monitor_store.all()}
+            )
 
     except Exception as exc:
         logger.exception("Task %s failed", task_id)

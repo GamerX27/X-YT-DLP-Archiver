@@ -4,7 +4,7 @@
         <meta charset="UTF-8" />
         <meta name="viewport" content="width=device-width, initial-scale=1.0" />
         <title>YT Downloader</title>
-        <link rel="stylesheet" href="/static/css/style.css" />
+        <link rel="stylesheet" href="/static/css/style.css?v=6" />
     </head>
     <body>
         <header>
@@ -271,12 +271,12 @@
                                     </option>
                                     <option value="weekly">Weekly</option>
                                 </select>
-                                <input
-                                    type="time"
+                                <select
                                     id="monitor-time"
-                                    value="03:00"
-                                    class="monitor-time-input"
-                                />
+                                    class="monitor-field-select"
+                                >
+                                    <!-- populated by JS with locale times -->
+                                </select>
                             </div>
                             <div class="monitor-field">
                                 <label for="monitor-res">Quality</label>
@@ -287,7 +287,6 @@
                                     </option>
                                     <option value="1440p">1440p</option>
                                     <option value="2160p">4K</option>
-                                    <option value="audio">Audio (MP3)</option>
                                 </select>
                             </div>
                         </div>
@@ -402,6 +401,6 @@
             </div>
         </template>
 
-        <script src="/static/js/app.js"></script>
+        <script src="/static/js/app.js?v=6"></script>
     </body>
 </html>

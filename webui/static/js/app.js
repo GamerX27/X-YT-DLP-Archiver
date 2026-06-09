@@ -27,6 +27,7 @@ let jellyfinEnabled = false;
 let currentTab = "downloads";
 let monitors = [];
 let selectedMonitorJfLibrary = null;
+let monitorTasks = new Map(); // monitor_id → active task
 let musicModeActive = false;
 let folderBrowserBase = ""; // root path of selected library
 let folderBrowserCurrent = ""; // current path being browsed (absolute)
@@ -321,6 +322,9 @@ const initJellyfin = async () => {
     if (data.enabled) {
       jellyfinEnabled = true;
       els.jellyfinArea().hidden = false;
+      // Show Jellyfin section on Monitor tab too
+      const mja = document.getElementById("monitor-jellyfin-area");
+      if (mja) mja.hidden = false;
       // Pre-fetch libraries so first open is instant
       await fetchJellyfinLibraries();
     }
@@ -633,6 +637,14 @@ const connectWs = () => {
       case "task_added":
       case "task_update":
         updateTask(msg.task);
+        if (msg.task.monitor_id) {
+          if (ACTIVE_STATUSES.includes(msg.task.status)) {
+            monitorTasks.set(msg.task.monitor_id, msg.task);
+          } else {
+            monitorTasks.delete(msg.task.monitor_id);
+          }
+          renderMonitors();
+        }
         break;
       case "task_removed":
         removeTask(msg.task_id);
@@ -824,7 +836,13 @@ const switchTab = (tab) => {
 
 const scheduleLabel = (m) => {
   const s = m.schedule;
-  if (s === "daily") return `Daily at ${m.schedule_time || "03:00"}`;
+  if (s === "daily") {
+    const [h, min] = (m.schedule_time || "03:00").split(":").map(Number);
+    const d = new Date();
+    d.setHours(h, min, 0, 0);
+    const t = d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+    return `Daily at ${t}`;
+  }
   if (s === "hourly") return "Every hour";
   if (s === "6h") return "Every 6 hours";
   if (s === "12h") return "Every 12 hours";
@@ -861,11 +879,50 @@ const renderMonitors = () => {
       card.dataset.id = m.id;
       list.appendChild(card);
     }
-    const statusClass =
-      m.status === "checking" ? "badge-analyzing" : "badge-pending";
+    const activeTask = monitorTasks.get(m.id);
+    const isDownloading = !!activeTask;
+    const statusClass = isDownloading
+      ? "badge-downloading"
+      : m.status === "up-to-date"
+        ? "badge-completed"
+        : m.status === "checking"
+          ? "badge-analyzing"
+          : "badge-pending";
+    const statusLabel = isDownloading
+      ? "downloading"
+      : m.status === "up-to-date"
+        ? "✓ up to date"
+        : m.status === "checking"
+          ? "checking…"
+          : m.status || "idle";
     const jfBadge = m.jellyfin_library_type
       ? `<span class="monitor-jf-badge"><img src="/static/img/jellyfin.svg" class="jellyfin-icon jellyfin-icon--sm" alt=""/> ${m.jellyfin_library_type}</span>`
       : "";
+    const archiveInfo =
+      m.archive_count != null || m.playlist_count != null
+        ? `<span class="monitor-archive">${m.archive_count ?? 0} / ${m.playlist_count ?? "?"} downloaded</span>`
+        : "";
+    const newBadge = m.last_new_videos
+      ? `<span class="monitor-new">+${m.last_new_videos} new</span>`
+      : "";
+    // Progress section — shown while a monitor-triggered download is running
+    const progressSection = activeTask
+      ? (() => {
+          const pct = activeTask.progress || 0;
+          const pi = activeTask.playlist_index;
+          const pc = activeTask.playlist_count;
+          const counter = pi && pc ? `${pi} / ${pc} · ` : "";
+          const text = activeTask.status_text || activeTask.status || "";
+          return `
+        <div class="monitor-dl-progress">
+          <div class="monitor-dl-bar-wrap">
+            <div class="monitor-dl-bar-fill ${pct < 1 ? "indeterminate" : ""}" style="width:${pct}%"></div>
+          </div>
+          <span class="monitor-dl-text">${counter}${text}</span>
+        </div>`;
+        })()
+      : "";
+
     card.innerHTML = `
       <div class="monitor-header">
         <div class="monitor-meta">
@@ -873,18 +930,20 @@ const renderMonitors = () => {
           ${jfBadge}
         </div>
         <div class="monitor-actions">
-          <span class="task-status-badge ${statusClass}">${m.status || "idle"}</span>
+          <span class="task-status-badge ${statusClass}">${statusLabel}</span>
           <button class="btn-monitor-run" data-id="${m.id}" title="Check now">▶</button>
           <button class="btn-remove" data-id="${m.id}" title="Remove">✕</button>
         </div>
       </div>
       <div class="monitor-url">${m.url}</div>
+      ${progressSection}
       <div class="monitor-footer">
         <span class="monitor-schedule">⏱ ${scheduleLabel(m)}</span>
         <span class="monitor-res">${m.resolution_override || "1080p"}</span>
+        ${archiveInfo}
+        ${newBadge}
         <span class="monitor-last">Last checked: ${fmtDatetime(m.last_checked)}</span>
         <span class="monitor-next">Next: ${fmtDatetime(m.next_run)}</span>
-        ${m.last_new_videos ? `<span class="monitor-new">+${m.last_new_videos} new</span>` : ""}
       </div>`;
   });
 };
@@ -1020,12 +1079,33 @@ document.addEventListener("DOMContentLoaded", () => {
   const monitorForm = document.getElementById("monitor-form");
   if (monitorForm)
     monitorForm.addEventListener("submit", handleMonitorFormSubmit);
+  // Populate time dropdown with locale-formatted hours
+  const monitorTimeEl = document.getElementById("monitor-time");
+  if (monitorTimeEl) {
+    for (let h = 0; h < 24; h++) {
+      const d = new Date();
+      d.setHours(h, 0, 0, 0);
+      const label = d.toLocaleTimeString([], {
+        hour: "2-digit",
+        minute: "2-digit",
+      });
+      const value = String(h).padStart(2, "0") + ":00";
+      const opt = document.createElement("option");
+      opt.value = value;
+      opt.textContent = label;
+      if (h === 3) opt.selected = true;
+      monitorTimeEl.appendChild(opt);
+    }
+  }
+
   const monitorScheduleEl = document.getElementById("monitor-schedule");
+  const syncTimeVisibility = () => {
+    if (monitorTimeEl)
+      monitorTimeEl.hidden = monitorScheduleEl?.value !== "daily";
+  };
   if (monitorScheduleEl) {
-    monitorScheduleEl.addEventListener("change", () => {
-      const timeInput = document.getElementById("monitor-time");
-      if (timeInput) timeInput.hidden = monitorScheduleEl.value !== "daily";
-    });
+    monitorScheduleEl.addEventListener("change", syncTimeVisibility);
+    syncTimeVisibility(); // set initial state
   }
   const monitorJfToggle = document.getElementById("monitor-jellyfin-toggle");
   if (monitorJfToggle) {
@@ -1042,10 +1122,6 @@ document.addEventListener("DOMContentLoaded", () => {
   const monitorListEl = document.getElementById("monitor-list");
   if (monitorListEl)
     monitorListEl.addEventListener("click", handleMonitorListClick);
-  if (jellyfinEnabled) {
-    const mja = document.getElementById("monitor-jellyfin-area");
-    if (mja) mja.hidden = false;
-  }
   fetchMonitors();
 
   els.folderBrowserBack().addEventListener("click", () => {
