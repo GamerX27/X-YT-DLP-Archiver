@@ -48,6 +48,12 @@ MEDIA_DIR = os.getenv(
     "MEDIA_DIR", "/media"
 )  # matches the volume mount in docker-compose
 
+# Statuses that mean a task still owns its playlist/URL — used to prevent
+# enqueuing a duplicate download while one is already in flight.
+ACTIVE_STATUSES = frozenset(
+    {"pending", "probing", "analyzing", "downloading", "moving", "ordering"}
+)
+
 tasks: Dict[str, Dict[str, Any]] = {}
 task_abort_events: Dict[str, threading.Event] = {}
 ws_clients: List[WebSocket] = []
@@ -78,6 +84,21 @@ def update_task(task_id: str, **kwargs) -> None:
         return
     tasks[task_id].update(kwargs)
     asyncio.ensure_future(broadcast({"type": "task_update", "task": tasks[task_id]}))
+
+
+def _active_task_for_url(url: str) -> Optional[Dict[str, Any]]:
+    """Return an in-flight task already downloading ``url``, if any.
+
+    Compares normalized playlist URLs so that e.g. a bare ``watch?v=…&list=…``
+    and the full ``playlist?list=…`` form are treated as the same target.
+    """
+    target = normalize_playlist_url(url)
+    for task in tasks.values():
+        if task.get("status") not in ACTIVE_STATUSES:
+            continue
+        if normalize_playlist_url(task.get("url", "")) == target:
+            return task
+    return None
 
 
 def _archive_count(monitor: Dict[str, Any]) -> int:
@@ -143,6 +164,22 @@ async def run_monitor(monitor: Dict[str, Any]) -> None:
         )
         monitor_store.set_status(monitor_id, "up-to-date")
         monitor_store.mark_ran(monitor_id, new_videos=0)
+        await broadcast({"type": "monitors_update", "monitors": monitor_store.all()})
+        return
+
+    # ── Step 3b: skip if a download for this playlist is already running ───────
+    # The download archive is only written as each video finishes, so during a
+    # long playlist run archive_count stays below playlist_count for minutes.
+    # Without this guard the 60 s scheduler would keep firing and enqueue a
+    # duplicate task for the same playlist.
+    existing = _active_task_for_url(monitor["url"])
+    if existing is not None:
+        logger.info(
+            "Monitor %s already has an active task %s for this playlist; skipping",
+            monitor_id,
+            existing["id"],
+        )
+        monitor_store.set_status(monitor_id, "downloading")
         await broadcast({"type": "monitors_update", "monitors": monitor_store.all()})
         return
 
@@ -708,6 +745,13 @@ async def api_browse(path: str):
 
 @app.post("/api/download")
 async def api_download(body: DownloadRequest):
+    existing = _active_task_for_url(body.url)
+    if existing is not None:
+        raise HTTPException(
+            status_code=409,
+            detail="This playlist is already downloading.",
+        )
+
     task_id = str(uuid.uuid4())
     task = {
         "id": task_id,
