@@ -260,6 +260,80 @@ async def reorder_jellyfin_playlist(dest: Path, agent) -> None:
             logger.warning("utime failed for %s: %s", ep["filename"], exc)
 
 
+def _count_archive_entries(archive_path: Optional[str]) -> int:
+    """Number of video IDs currently recorded in a yt-dlp download archive.
+
+    Used to detect whether a download pass actually fetched anything new.
+    """
+    if not archive_path:
+        return 0
+    try:
+        with open(archive_path, "r", encoding="utf-8") as fh:
+            return sum(1 for line in fh if line.strip())
+    except OSError:
+        return 0
+
+
+async def _download_with_resume(
+    download_kwargs: Dict[str, Any],
+    archive_file: str,
+    task_id: str,
+    max_passes: int = 12,
+) -> Path:
+    """Run the playlist download repeatedly until a pass downloads nothing new.
+
+    YouTube can hand yt-dlp a truncated view of a long playlist (e.g. only the
+    first ~100 of 181 entries), and long downloads can also be interrupted by
+    transient network/format errors partway through. Because every fetched
+    video ID is written to the persistent ``.yt-dlp-archive`` hidden file, we
+    can simply run the same download again: yt-dlp skips everything already in
+    the archive and continues with whatever remains. We loop until a clean pass
+    adds zero new IDs (playlist complete) or we hit ``max_passes``.
+    """
+    last_dir = DOWNLOADS_DIR / task_id
+    for pass_num in range(1, max_passes + 1):
+        before = _count_archive_entries(archive_file)
+        if pass_num > 1:
+            update_task(
+                task_id,
+                status_text=f"Resuming playlist… (pass {pass_num}, {before} done)",
+            )
+        try:
+            last_dir = await downloader.download(**download_kwargs)
+        except DownloadCancelled:
+            raise
+        except Exception as exc:
+            after = _count_archive_entries(archive_file)
+            # If this pass still managed to fetch new items before failing,
+            # resume on the next pass instead of giving up — the archive
+            # guarantees we won't re-download what already succeeded.
+            if after > before and pass_num < max_passes:
+                logger.warning(
+                    "Task %s — pass %d fetched %d new item(s) then errored, "
+                    "resuming: %s",
+                    task_id,
+                    pass_num,
+                    after - before,
+                    exc,
+                )
+                continue
+            raise
+
+        after = _count_archive_entries(archive_file)
+        new_items = after - before
+        logger.info(
+            "Task %s — playlist pass %d added %d new item(s) (archive %d → %d)",
+            task_id,
+            pass_num,
+            new_items,
+            before,
+            after,
+        )
+        if new_items == 0:
+            break
+    return last_dir
+
+
 async def process_task(task_id: str) -> None:
     task = tasks.get(task_id)
     if task is None:
@@ -363,20 +437,31 @@ async def process_task(task_id: str) -> None:
                 status_text=status_text,
             )
 
+        download_kwargs: Dict[str, Any] = dict(
+            url=task["url"],
+            format_string=plan.get("format_string", "bestvideo+bestaudio/best"),
+            output_template=plan.get("output_template", "%(title)s [%(id)s].%(ext)s"),
+            extra_opts=plan.get("extra_opts", {}),
+            folder_path=plan.get("folder_path", "Downloads"),
+            task_id=task_id,
+            progress_cb=progress_cb,
+            abort_event=abort_event,
+            is_audio=is_audio,
+        )
+
+        # For playlists with a download archive, keep re-running the download
+        # until a pass adds nothing new. yt-dlp skips already-archived IDs, so
+        # each pass resumes where the previous one left off — completing
+        # playlists that YouTube only exposed partially and recovering from
+        # mid-playlist interruptions.
+        archive_file = plan.get("extra_opts", {}).get("download_archive")
         try:
-            task_dir = await downloader.download(
-                url=task["url"],
-                format_string=plan.get("format_string", "bestvideo+bestaudio/best"),
-                output_template=plan.get(
-                    "output_template", "%(title)s [%(id)s].%(ext)s"
-                ),
-                extra_opts=plan.get("extra_opts", {}),
-                folder_path=plan.get("folder_path", "Downloads"),
-                task_id=task_id,
-                progress_cb=progress_cb,
-                abort_event=abort_event,
-                is_audio=is_audio,
-            )
+            if plan.get("content_type") == "playlist" and archive_file:
+                task_dir = await _download_with_resume(
+                    download_kwargs, archive_file, task_id
+                )
+            else:
+                task_dir = await downloader.download(**download_kwargs)
         except DownloadCancelled:
             shutil.rmtree(DOWNLOADS_DIR / task_id, ignore_errors=True)
             update_task(
