@@ -20,6 +20,7 @@ from fastapi.templating import Jinja2Templates
 from jellyfin import JellyfinClient
 from jinja2 import Environment, FileSystemLoader
 from llm_agent import LLMAgent
+from monitor import MonitorStore
 from pydantic import BaseModel
 
 logging.basicConfig(
@@ -51,6 +52,7 @@ worker_tasks: List[asyncio.Task] = []
 downloader = Downloader()
 llm_agent = LLMAgent()
 jellyfin_client = JellyfinClient()
+monitor_store = MonitorStore()
 
 
 async def broadcast(msg: Dict[str, Any]) -> None:
@@ -70,6 +72,55 @@ def update_task(task_id: str, **kwargs) -> None:
         return
     tasks[task_id].update(kwargs)
     asyncio.ensure_future(broadcast({"type": "task_update", "task": tasks[task_id]}))
+
+
+async def run_monitor(monitor: Dict[str, Any]) -> None:
+    """Enqueue a download task for a monitor; archive ensures only new videos."""
+    monitor_id = monitor["id"]
+    monitor_store.set_status(monitor_id, "checking")
+    await broadcast({"type": "monitors_update", "monitors": monitor_store.all()})
+
+    task_id = str(uuid.uuid4())
+    task = {
+        "id": task_id,
+        "url": monitor["url"],
+        "status": "pending",
+        "status_text": f"Monitor: {monitor.get('name', monitor['url'][:40])}",
+        "progress": 0,
+        "title": monitor.get("name"),
+        "channel": monitor.get("channel"),
+        "folder": None,
+        "filename": None,
+        "format_string": None,
+        "speed": None,
+        "eta": None,
+        "playlist_index": None,
+        "playlist_count": None,
+        "final_path": None,
+        "resolution_override": monitor.get("resolution_override", "1080p"),
+        "jellyfin_library_id": monitor.get("jellyfin_library_id"),
+        "jellyfin_library_path": monitor.get("jellyfin_library_path"),
+        "jellyfin_library_type": monitor.get("jellyfin_library_type"),
+        "folder_override": monitor.get("folder_override"),
+        "monitor_id": monitor_id,
+        "error": None,
+    }
+    tasks[task_id] = task
+    await task_queue.put(task_id)
+    await broadcast({"type": "task_update", "task": task})
+    logger.info("Monitor %s enqueued task %s", monitor_id, task_id)
+
+
+async def monitor_scheduler() -> None:
+    """Background loop — checks every 60 s and triggers due monitors."""
+    while True:
+        await asyncio.sleep(60)
+        try:
+            for monitor in monitor_store.due():
+                await run_monitor(monitor)
+                monitor_store.mark_ran(monitor["id"])
+        except Exception as exc:
+            logger.exception("Monitor scheduler error: %s", exc)
 
 
 async def reorder_jellyfin_playlist(dest: Path, agent) -> None:
@@ -337,6 +388,7 @@ async def lifespan(app: FastAPI):
     for _ in range(MAX_CONCURRENT_DOWNLOADS):
         t = asyncio.create_task(worker())
         worker_tasks.append(t)
+    worker_tasks.append(asyncio.create_task(monitor_scheduler()))
     yield
     for t in worker_tasks:
         t.cancel()
@@ -507,6 +559,85 @@ async def api_download(body: DownloadRequest):
 @app.get("/api/tasks")
 async def api_tasks():
     return list(tasks.values())
+
+
+# ── Monitor routes ───────────────────────────────────────────────────────────
+
+
+class MonitorRequest(BaseModel):
+    url: str
+    name: Optional[str] = None
+    schedule: str = "daily"
+    schedule_time: str = "03:00"
+    resolution_override: Optional[str] = "1080p"
+    jellyfin_library_id: Optional[str] = None
+    jellyfin_library_path: Optional[str] = None
+    jellyfin_library_type: Optional[str] = None
+    folder_override: Optional[str] = None
+    enabled: bool = True
+
+
+@app.get("/api/monitors")
+async def api_monitors():
+    return monitor_store.all()
+
+
+@app.post("/api/monitors")
+async def api_add_monitor(body: MonitorRequest):
+    name = body.name
+    channel = None
+    if not name:
+        try:
+            meta = await downloader.probe_url(body.url)
+            name = meta.get("title") or meta.get("playlist_title") or body.url
+            channel = meta.get("channel") or meta.get("uploader")
+        except Exception:
+            name = body.url
+    monitor = monitor_store.add(
+        {
+            "url": body.url,
+            "name": name,
+            "channel": channel,
+            "schedule": body.schedule,
+            "schedule_time": body.schedule_time,
+            "resolution_override": body.resolution_override,
+            "jellyfin_library_id": body.jellyfin_library_id,
+            "jellyfin_library_path": body.jellyfin_library_path,
+            "jellyfin_library_type": body.jellyfin_library_type,
+            "folder_override": body.folder_override,
+            "enabled": body.enabled,
+        }
+    )
+    await broadcast({"type": "monitors_update", "monitors": monitor_store.all()})
+    return monitor
+
+
+@app.delete("/api/monitors/{monitor_id}")
+async def api_delete_monitor(monitor_id: str):
+    if not monitor_store.remove(monitor_id):
+        raise HTTPException(status_code=404, detail="Monitor not found")
+    await broadcast({"type": "monitors_update", "monitors": monitor_store.all()})
+    return {"deleted": monitor_id}
+
+
+@app.post("/api/monitors/{monitor_id}/run")
+async def api_run_monitor_now(monitor_id: str):
+    monitor = monitor_store.get(monitor_id)
+    if not monitor:
+        raise HTTPException(status_code=404, detail="Monitor not found")
+    await run_monitor(monitor)
+    monitor_store.mark_ran(monitor_id)
+    await broadcast({"type": "monitors_update", "monitors": monitor_store.all()})
+    return {"queued": monitor_id}
+
+
+@app.patch("/api/monitors/{monitor_id}")
+async def api_update_monitor(monitor_id: str, body: dict):
+    monitor = monitor_store.update(monitor_id, **body)
+    if not monitor:
+        raise HTTPException(status_code=404, detail="Monitor not found")
+    await broadcast({"type": "monitors_update", "monitors": monitor_store.all()})
+    return monitor
 
 
 @app.post("/api/tasks/{task_id}/cancel")

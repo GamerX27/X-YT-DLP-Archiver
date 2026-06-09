@@ -1211,3 +1211,212 @@ h2 {
     color: var(--text-muted);
     padding: 4px 0;
 }
+
+/* ============================================================
+   Tab navigation
+   ============================================================ */
+.tab-nav {
+    display: flex;
+    gap: 2px;
+    border-bottom: 1px solid var(--border);
+    margin-bottom: 16px;
+}
+
+.tab-btn {
+    background: none;
+    border: none;
+    border-bottom: 2px solid transparent;
+    color: var(--text-muted);
+    cursor: pointer;
+    font-size: 0.9rem;
+    font-weight: 500;
+    padding: 8px 18px;
+    margin-bottom: -1px;
+    transition:
+        color 0.15s,
+        border-color 0.15s;
+}
+
+.tab-btn:hover {
+    color: var(--text);
+}
+
+.tab-btn.active {
+    color: var(--accent);
+    border-bottom-color: var(--accent);
+}
+
+/* ============================================================
+   Monitor cards
+   ============================================================ */
+.monitor-list {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+}
+
+.monitor-card {
+    background: var(--bg-elevated);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+    padding: 12px 14px;
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+}
+
+.monitor-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+}
+
+.monitor-meta {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    min-width: 0;
+    flex: 1;
+}
+
+.monitor-name {
+    font-weight: 600;
+    font-size: 0.9rem;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.monitor-jf-badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    font-size: 0.72rem;
+    color: var(--text-muted);
+    flex-shrink: 0;
+}
+
+.monitor-actions {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    flex-shrink: 0;
+}
+
+.btn-monitor-run {
+    background: none;
+    border: 1px solid var(--border);
+    color: var(--success);
+    cursor: pointer;
+    font-size: 0.75rem;
+    padding: 3px 8px;
+    border-radius: 4px;
+    transition:
+        background 0.15s,
+        border-color 0.15s;
+}
+
+.btn-monitor-run:hover {
+    background: rgba(63, 185, 80, 0.1);
+    border-color: var(--success);
+}
+
+.btn-monitor-run:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+}
+
+.monitor-url {
+    font-size: 0.75rem;
+    color: var(--text-muted);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.monitor-footer {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 10px;
+    font-size: 0.75rem;
+    color: var(--text-muted);
+}
+
+.monitor-schedule {
+    color: var(--accent);
+}
+
+.monitor-res {
+    background: rgba(88, 166, 255, 0.1);
+    color: var(--accent);
+    padding: 1px 6px;
+    border-radius: 3px;
+}
+
+.monitor-new {
+    color: var(--success);
+    font-weight: 600;
+}
+
+/* Monitor form */
+.monitor-options {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 16px;
+    margin: 12px 0;
+}
+
+.monitor-field {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+
+.monitor-field label {
+    font-size: 0.82rem;
+    color: var(--text-muted);
+    white-space: nowrap;
+}
+
+.monitor-field select {
+    background: var(--bg-input);
+    border: 1px solid var(--border);
+    color: var(--text);
+    border-radius: var(--radius-sm);
+    padding: 5px 8px;
+    font-size: 0.82rem;
+    cursor: pointer;
+}
+
+.monitor-time-input {
+    background: var(--bg-input);
+    border: 1px solid var(--border);
+    color: var(--text);
+    border-radius: var(--radius-sm);
+    padding: 5px 8px;
+    font-size: 0.82rem;
+    width: 90px;
+}
+
+.btn-primary {
+    background: var(--accent);
+    border: none;
+    color: #0d1117;
+    cursor: pointer;
+    font-size: 0.88rem;
+    font-weight: 600;
+    padding: 8px 18px;
+    border-radius: var(--radius-sm);
+    transition: background 0.15s;
+    margin-top: 4px;
+}
+
+.btn-primary:hover {
+    background: var(--accent-hover);
+}
+
+.btn-primary:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+}

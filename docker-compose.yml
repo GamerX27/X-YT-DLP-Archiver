@@ -14,6 +14,8 @@ services:
       - ./webui/instructions_audio.md:/app/instructions_audio.md:ro
       # Temporary download staging area
       - downloads_tmp:/app/tmp_downloads
+      # Persist monitor list across rebuilds
+      - monitors_data:/app/monitors_data
       # Final media destination on the host
       - ${MEDIA_PATH:-./media_output}:/media
       # Jellyfin media root — mounted at the same path so Jellyfin API paths
@@ -67,3 +69,4 @@ services:
 volumes:
   ollama_models:
   downloads_tmp:
+  monitors_data:

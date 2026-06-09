@@ -24,6 +24,9 @@ let selectedRes = null;
 let jellyfinLibraries = []; // cached list from /api/jellyfin/libraries
 let selectedJfLibrary = null; // { id, name, type, path } or null
 let jellyfinEnabled = false;
+let currentTab = "downloads";
+let monitors = [];
+let selectedMonitorJfLibrary = null;
 let musicModeActive = false;
 let folderBrowserBase = ""; // root path of selected library
 let folderBrowserCurrent = ""; // current path being browsed (absolute)
@@ -634,6 +637,10 @@ const connectWs = () => {
       case "task_removed":
         removeTask(msg.task_id);
         break;
+      case "monitors_update":
+        monitors = msg.monitors || [];
+        renderMonitors();
+        break;
     }
   });
 };
@@ -801,6 +808,191 @@ const handleClearCompleted = async () => {
   toDelete.forEach((t) => removeTask(t.id));
 };
 
+// ── Tab navigation ───────────────────────────────────────────────────────────
+
+const switchTab = (tab) => {
+  currentTab = tab;
+  document.querySelectorAll(".tab-btn").forEach((btn) => {
+    btn.classList.toggle("active", btn.dataset.tab === tab);
+  });
+  document.querySelectorAll(".tab-pane").forEach((pane) => {
+    pane.hidden = pane.id !== `tab-${tab}`;
+  });
+};
+
+// ── Monitor tab ───────────────────────────────────────────────────────────────
+
+const scheduleLabel = (m) => {
+  const s = m.schedule;
+  if (s === "daily") return `Daily at ${m.schedule_time || "03:00"}`;
+  if (s === "hourly") return "Every hour";
+  if (s === "6h") return "Every 6 hours";
+  if (s === "12h") return "Every 12 hours";
+  if (s === "weekly") return "Weekly";
+  return s;
+};
+
+const fmtDatetime = (iso) => {
+  if (!iso) return "Never";
+  try {
+    return new Date(iso).toLocaleString();
+  } catch {
+    return iso;
+  }
+};
+
+const renderMonitors = () => {
+  const list = document.getElementById("monitor-list");
+  const empty = document.getElementById("monitor-empty");
+  const countEl = document.getElementById("monitor-count");
+  if (!list) return;
+  if (countEl) countEl.textContent = monitors.length;
+  if (empty) empty.hidden = monitors.length > 0;
+
+  list.querySelectorAll(".monitor-card").forEach((card) => {
+    if (!monitors.find((m) => m.id === card.dataset.id)) card.remove();
+  });
+
+  monitors.forEach((m) => {
+    let card = list.querySelector(`.monitor-card[data-id="${m.id}"]`);
+    if (!card) {
+      card = document.createElement("div");
+      card.className = "monitor-card";
+      card.dataset.id = m.id;
+      list.appendChild(card);
+    }
+    const statusClass =
+      m.status === "checking" ? "badge-analyzing" : "badge-pending";
+    const jfBadge = m.jellyfin_library_type
+      ? `<span class="monitor-jf-badge"><img src="/static/img/jellyfin.svg" class="jellyfin-icon jellyfin-icon--sm" alt=""/> ${m.jellyfin_library_type}</span>`
+      : "";
+    card.innerHTML = `
+      <div class="monitor-header">
+        <div class="monitor-meta">
+          <span class="monitor-name">${m.name || m.url}</span>
+          ${jfBadge}
+        </div>
+        <div class="monitor-actions">
+          <span class="task-status-badge ${statusClass}">${m.status || "idle"}</span>
+          <button class="btn-monitor-run" data-id="${m.id}" title="Check now">▶</button>
+          <button class="btn-remove" data-id="${m.id}" title="Remove">✕</button>
+        </div>
+      </div>
+      <div class="monitor-url">${m.url}</div>
+      <div class="monitor-footer">
+        <span class="monitor-schedule">⏱ ${scheduleLabel(m)}</span>
+        <span class="monitor-res">${m.resolution_override || "1080p"}</span>
+        <span class="monitor-last">Last checked: ${fmtDatetime(m.last_checked)}</span>
+        <span class="monitor-next">Next: ${fmtDatetime(m.next_run)}</span>
+        ${m.last_new_videos ? `<span class="monitor-new">+${m.last_new_videos} new</span>` : ""}
+      </div>`;
+  });
+};
+
+const renderMonitorJellyfinLibraries = () => {
+  const grid = document.getElementById("monitor-jellyfin-grid");
+  if (!grid) return;
+  grid.innerHTML = "";
+  jellyfinLibraries.forEach((lib) => {
+    const btn = document.createElement("button");
+    btn.type = "button";
+    btn.className =
+      "jellyfin-lib-btn" +
+      (selectedMonitorJfLibrary?.id === lib.id ? " selected" : "");
+    const displayPath = lib.jellyfin_path || lib.path;
+    btn.innerHTML = `<span class="jf-lib-name">${lib.name}</span><span class="jf-lib-type">${lib.type_label}</span><span class="jf-lib-path" title="${lib.path}">${displayPath}</span>`;
+    btn.addEventListener("click", () => {
+      selectedMonitorJfLibrary = lib;
+      renderMonitorJellyfinLibraries();
+      const btnText = document.getElementById("monitor-jellyfin-btn-text");
+      if (btnText) btnText.textContent = lib.name;
+      const picker = document.getElementById("monitor-jellyfin-picker");
+      if (picker) picker.hidden = true;
+    });
+    grid.appendChild(btn);
+  });
+};
+
+const handleMonitorFormSubmit = async (e) => {
+  e.preventDefault();
+  const url = document.getElementById("monitor-url").value.trim();
+  if (!url) return;
+  const btn = document.getElementById("monitor-submit-btn");
+  btn.disabled = true;
+  btn.textContent = "Adding…";
+  try {
+    const resp = await fetch("/api/monitors", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        url,
+        schedule: document.getElementById("monitor-schedule").value,
+        schedule_time: document.getElementById("monitor-time").value || "03:00",
+        resolution_override: document.getElementById("monitor-res").value,
+        jellyfin_library_id: selectedMonitorJfLibrary?.id ?? null,
+        jellyfin_library_path: selectedMonitorJfLibrary?.path ?? null,
+        jellyfin_library_type: selectedMonitorJfLibrary?.type ?? null,
+      }),
+    });
+    if (resp.ok) {
+      const m = await resp.json();
+      monitors = [...monitors.filter((x) => x.id !== m.id), m];
+      renderMonitors();
+      document.getElementById("monitor-url").value = "";
+      selectedMonitorJfLibrary = null;
+      const btnText = document.getElementById("monitor-jellyfin-btn-text");
+      if (btnText) btnText.textContent = "Save to Jellyfin";
+      showToast("Monitor added!", "success");
+    } else {
+      const err = await resp.json().catch(() => ({}));
+      showToast(err.detail || "Failed to add monitor", "error");
+    }
+  } catch {
+    showToast("Network error", "error");
+  } finally {
+    btn.disabled = false;
+    btn.textContent = "+ Add Monitor";
+  }
+};
+
+const handleMonitorListClick = async (e) => {
+  const runBtn = e.target.closest(".btn-monitor-run");
+  const removeBtn = e.target.closest(".btn-remove");
+  const id = runBtn?.dataset.id || removeBtn?.dataset.id;
+  if (!id) return;
+
+  if (runBtn) {
+    runBtn.disabled = true;
+    try {
+      await fetch(`/api/monitors/${id}/run`, { method: "POST" });
+      showToast("Check queued!", "success");
+    } catch {
+      showToast("Failed to queue", "error");
+    } finally {
+      runBtn.disabled = false;
+    }
+  }
+  if (removeBtn) {
+    try {
+      await fetch(`/api/monitors/${id}`, { method: "DELETE" });
+      monitors = monitors.filter((m) => m.id !== id);
+      renderMonitors();
+    } catch {
+      showToast("Failed to remove", "error");
+    }
+  }
+};
+
+const fetchMonitors = async () => {
+  try {
+    const resp = await fetch("/api/monitors");
+    monitors = await resp.json();
+    renderMonitors();
+  } catch {
+    // silently fail
+  }
+};
+
 // ── Init ──────────────────────────────────────────────────────────────────────
 
 document.addEventListener("DOMContentLoaded", () => {
@@ -818,6 +1010,44 @@ document.addEventListener("DOMContentLoaded", () => {
   els.completedList().addEventListener("click", handleRemoveClick);
   els.clearBtn().addEventListener("click", handleClearCompleted);
   els.jellyfinToggle().addEventListener("click", handleJellyfinToggle);
+
+  // Tab navigation
+  document.querySelectorAll(".tab-btn").forEach((btn) => {
+    btn.addEventListener("click", () => switchTab(btn.dataset.tab));
+  });
+
+  // Monitor form
+  const monitorForm = document.getElementById("monitor-form");
+  if (monitorForm)
+    monitorForm.addEventListener("submit", handleMonitorFormSubmit);
+  const monitorScheduleEl = document.getElementById("monitor-schedule");
+  if (monitorScheduleEl) {
+    monitorScheduleEl.addEventListener("change", () => {
+      const timeInput = document.getElementById("monitor-time");
+      if (timeInput) timeInput.hidden = monitorScheduleEl.value !== "daily";
+    });
+  }
+  const monitorJfToggle = document.getElementById("monitor-jellyfin-toggle");
+  if (monitorJfToggle) {
+    monitorJfToggle.addEventListener("click", () => {
+      const picker = document.getElementById("monitor-jellyfin-picker");
+      if (!picker) return;
+      picker.hidden = !picker.hidden;
+      if (!picker.hidden) {
+        if (jellyfinLibraries.length === 0) fetchJellyfinLibraries();
+        renderMonitorJellyfinLibraries();
+      }
+    });
+  }
+  const monitorListEl = document.getElementById("monitor-list");
+  if (monitorListEl)
+    monitorListEl.addEventListener("click", handleMonitorListClick);
+  if (jellyfinEnabled) {
+    const mja = document.getElementById("monitor-jellyfin-area");
+    if (mja) mja.hidden = false;
+  }
+  fetchMonitors();
+
   els.folderBrowserBack().addEventListener("click", () => {
     const parent = folderBrowserCurrent.split("/").slice(0, -1).join("/");
     renderFolderBrowser(parent || folderBrowserBase);
