@@ -4,7 +4,7 @@
         <meta charset="UTF-8" />
         <meta name="viewport" content="width=device-width, initial-scale=1.0" />
         <title>YT Downloader</title>
-        <link rel="stylesheet" href="/static/css/style.css?v=10" />
+        <link rel="stylesheet" href="/static/css/style.css?v=11" />
     </head>
     <body>
         <header>
@@ -133,8 +133,12 @@
                             </div>
                         </div>
 
-                        <!-- Playlist numbering option -->
-                        <div class="playlist-index-area">
+                        <!-- Playlist numbering option (shown only for playlists/channels) -->
+                        <div
+                            class="playlist-index-area"
+                            id="playlist-index-area"
+                            hidden
+                        >
                             <label>
                                 <input
                                     type="checkbox"
@@ -430,6 +434,6 @@
             </div>
         </template>
 
-        <script src="/static/js/app.js?v=10"></script>
+        <script src="/static/js/app.js?v=11"></script>
     </body>
 </html>

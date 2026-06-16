@@ -54,6 +54,7 @@ const els = {
   completedCount: () => $("completed-count"),
   clearBtn: () => $("clear-completed-btn"),
   template: () => $("task-template"),
+  playlistIndexArea: () => $("playlist-index-area"),
   playlistIndexCheckbox: () => $("playlist-index-checkbox"),
   monitorPlaylistIndexCheckbox: () => $("monitor-playlist-index-checkbox"),
   // resolution area
@@ -152,10 +153,17 @@ const showProbeInfo = (title, channel, isPlaylist, typeOverride = null) => {
   }
 
   els.probeInfo().hidden = false;
+
+  // The numbering toggle only makes sense for playlists/channels, which yt-dlp
+  // both report as a "playlist" type. Hide it for single videos.
+  const indexArea = els.playlistIndexArea();
+  if (indexArea) indexArea.hidden = !isPlaylist;
 };
 
 const hideProbeInfo = () => {
   els.probeInfo().hidden = true;
+  const indexArea = els.playlistIndexArea();
+  if (indexArea) indexArea.hidden = true;
 };
 
 // ── Jellyfin ──────────────────────────────────────────────────────────────────
