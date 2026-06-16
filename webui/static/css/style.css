@@ -934,6 +934,28 @@ h2 {
    ============================================================ */
 
 /* ── Area wrapper ───────────────────────────────────────── */
+/* Playlist numbering toggle */
+.playlist-index-area {
+    margin-top: 8px;
+}
+
+.playlist-index-area label {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    cursor: pointer;
+    font-size: 0.8rem;
+    color: var(--text-muted);
+}
+
+.playlist-index-area input[type="checkbox"] {
+    width: 14px;
+    height: 14px;
+    accent-color: var(--accent);
+    cursor: pointer;
+    margin: 0;
+}
+
 .jellyfin-area {
     display: flex;
     flex-direction: column;
