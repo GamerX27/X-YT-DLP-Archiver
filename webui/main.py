@@ -222,6 +222,7 @@ async def run_monitor(monitor: Dict[str, Any]) -> None:
         "jellyfin_library_type": monitor.get("jellyfin_library_type"),
         "folder_override": monitor.get("folder_override"),
         "monitor_id": monitor_id,
+        "include_playlist_index": monitor.get("include_playlist_index", True),
         "error": None,
     }
     tasks[task_id] = task
@@ -452,6 +453,7 @@ async def process_task(task_id: str) -> None:
             metadata,
             task.get("resolution_override"),
             jellyfin_library_type=task.get("jellyfin_library_type"),
+            include_playlist_index=task.get("include_playlist_index", True),
         )
         update_task(
             task_id,
@@ -752,6 +754,9 @@ class DownloadRequest(BaseModel):
     folder_override: Optional[str] = (
         None  # relative subfolder within the library (user-selected)
     )
+    include_playlist_index: Optional[bool] = (
+        True  # Whether to include numbering in playlist filenames
+    )
 
 
 class ProbeRequest(BaseModel):
@@ -905,6 +910,7 @@ async def api_download(body: DownloadRequest):
         "jellyfin_library_path": body.jellyfin_library_path,
         "jellyfin_library_type": body.jellyfin_library_type,
         "folder_override": body.folder_override,
+        "include_playlist_index": body.include_playlist_index,
         "error": None,
     }
     tasks[task_id] = task
@@ -933,6 +939,9 @@ class MonitorRequest(BaseModel):
     jellyfin_library_type: Optional[str] = None
     folder_override: Optional[str] = None
     enabled: bool = True
+    include_playlist_index: bool = (
+        True  # Whether to include numbering in playlist filenames
+    )
 
 
 @app.get("/api/monitors")
@@ -965,6 +974,7 @@ async def api_add_monitor(body: MonitorRequest):
             "jellyfin_library_type": body.jellyfin_library_type,
             "folder_override": body.folder_override,
             "enabled": body.enabled,
+            "include_playlist_index": body.include_playlist_index,
         }
     )
     await broadcast({"type": "monitors_update", "monitors": monitor_store.all()})

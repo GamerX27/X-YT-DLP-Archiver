@@ -54,6 +54,8 @@ const els = {
   completedCount: () => $("completed-count"),
   clearBtn: () => $("clear-completed-btn"),
   template: () => $("task-template"),
+  playlistIndexCheckbox: () => $("playlist-index-checkbox"),
+  monitorPlaylistIndexCheckbox: () => $("monitor-playlist-index-checkbox"),
   // resolution area
   resArea: () => $("res-area"),
   resHint: () => $("res-hint"),
@@ -718,6 +720,7 @@ const handleFormSubmit = async (e) => {
         jellyfin_library_path: selectedJfLibrary?.path ?? null,
         jellyfin_library_type: selectedJfLibrary?.type ?? null,
         folder_override: selectedFolderOverride || null,
+        include_playlist_index: els.playlistIndexCheckbox().checked,
       }),
     });
 
@@ -796,6 +799,7 @@ const handleRetryClick = async (e) => {
         jellyfin_library_path: task.jellyfin_library_path ?? null,
         jellyfin_library_type: task.jellyfin_library_type ?? null,
         folder_override: task.folder_override ?? null,
+        include_playlist_index: task.include_playlist_index ?? true,
       }),
     });
     if (resp.ok) {
@@ -919,6 +923,7 @@ const renderMonitors = () => {
     const jfBadge = m.jellyfin_library_id
       ? `<span class="monitor-jf-badge"><img src="/static/img/jellyfin.svg" class="jellyfin-icon jellyfin-icon--sm" alt=""/> ${m.jellyfin_library_name || m.jellyfin_library_type || "Jellyfin"}</span>`
       : "";
+    const numberingBadge = `<span class="monitor-numbering">${m.include_playlist_index ? "✓ Numbering" : "✗ No numbering"}</span>`;
     const archiveInfo =
       m.archive_count != null || m.playlist_count != null
         ? `<span class="monitor-archive">${m.archive_count ?? 0} / ${m.playlist_count ?? "?"} downloaded</span>`
@@ -961,6 +966,7 @@ const renderMonitors = () => {
       <div class="monitor-footer">
         <span class="monitor-schedule">⏱ ${scheduleLabel(m)}</span>
         <span class="monitor-res">${m.resolution_override || "1080p"}</span>
+        ${numberingBadge}
         ${archiveInfo}
         ${newBadge}
         <span class="monitor-last">Last checked: ${fmtDatetime(m.last_checked)}</span>
@@ -1013,6 +1019,7 @@ const handleMonitorFormSubmit = async (e) => {
         jellyfin_library_name: selectedMonitorJfLibrary?.name ?? null,
         jellyfin_library_path: selectedMonitorJfLibrary?.path ?? null,
         jellyfin_library_type: selectedMonitorJfLibrary?.type ?? null,
+        include_playlist_index: els.monitorPlaylistIndexCheckbox().checked,
       }),
     });
     if (resp.ok) {

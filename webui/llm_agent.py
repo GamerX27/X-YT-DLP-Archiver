@@ -125,7 +125,10 @@ class LLMAgent:
         return channel, playlist or "", folder
 
     def _folder_for_jellyfin(
-        self, summary: Dict[str, Any], library_type: str
+        self,
+        summary: Dict[str, Any],
+        library_type: str,
+        include_playlist_index: bool = True,
     ) -> tuple[str, str, str, str]:
         """
         Return (channel, playlist, folder_path, output_template) for Jellyfin mode.
@@ -149,7 +152,11 @@ class LLMAgent:
         elif lt == "tvshows":
             if is_playlist and playlist:
                 folder = f"{channel}/{playlist}"
-                template = "%(playlist_index)02d - %(title)s [%(id)s].%(ext)s"
+                template = (
+                    "%(playlist_index)02d - %(title)s [%(id)s].%(ext)s"
+                    if include_playlist_index
+                    else "%(title)s [%(id)s].%(ext)s"
+                )
             elif year:
                 folder = f"{channel}/Season {year}"
                 template = "%(upload_date>%Y-%m-%d)s - %(title)s [%(id)s].%(ext)s"
@@ -169,7 +176,11 @@ class LLMAgent:
             if is_playlist and playlist:
                 # Album download: Artist/Album/
                 folder = f"{artist}/{playlist}"
-                template = "%(playlist_index)02d - %(title)s.%(ext)s"
+                template = (
+                    "%(playlist_index)02d - %(title)s.%(ext)s"
+                    if include_playlist_index
+                    else "%(title)s.%(ext)s"
+                )
             else:
                 # Single track: Artist/
                 folder = artist
@@ -179,7 +190,11 @@ class LLMAgent:
         else:  # homevideos, mixed, musicvideos, photos, …
             if is_playlist and playlist:
                 folder = f"{channel}/{playlist}"
-                template = "%(playlist_index)02d - %(title)s.%(ext)s"
+                template = (
+                    "%(playlist_index)02d - %(title)s.%(ext)s"
+                    if include_playlist_index
+                    else "%(title)s.%(ext)s"
+                )
             else:
                 folder = channel
                 template = "%(title)s.%(ext)s"
@@ -258,6 +273,7 @@ class LLMAgent:
         metadata: Dict[str, Any],
         resolution_override: Optional[str] = None,
         jellyfin_library_type: Optional[str] = None,
+        include_playlist_index: bool = True,
     ) -> Dict[str, Any]:
         summary = self._summarize_metadata(metadata)
 
@@ -266,15 +282,18 @@ class LLMAgent:
         is_playlist = summary.get("is_playlist", False)
         if jellyfin_library_type:
             channel, playlist, folder, output_template = self._folder_for_jellyfin(
-                summary, jellyfin_library_type
+                summary, jellyfin_library_type, include_playlist_index
             )
         else:
             channel, playlist, folder = self._folder_from_summary(summary)
-            output_template = (
-                "%(playlist_index)02d - %(title)s.%(ext)s"
-                if is_playlist
-                else "%(title)s.%(ext)s"
-            )
+            if is_playlist:
+                output_template = (
+                    "%(playlist_index)02d - %(title)s.%(ext)s"
+                    if include_playlist_index
+                    else "%(title)s.%(ext)s"
+                )
+            else:
+                output_template = "%(title)s.%(ext)s"
 
         logger.info(
             "Task analysis — channel=%r  playlist=%r  folder=%r  "

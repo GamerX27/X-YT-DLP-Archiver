@@ -1391,6 +1391,14 @@ h2 {
     border-radius: 3px;
 }
 
+.monitor-numbering {
+    background: rgba(139, 148, 158, 0.1);
+    color: var(--text-muted);
+    padding: 1px 6px;
+    border-radius: 3px;
+    font-size: 0.75rem;
+}
+
 .monitor-new {
     color: var(--success);
     font-weight: 600;
