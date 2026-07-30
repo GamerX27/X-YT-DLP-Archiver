@@ -4,20 +4,26 @@
         <meta charset="UTF-8" />
         <meta name="viewport" content="width=device-width, initial-scale=1.0" />
         <title>YT Downloader</title>
-        <link rel="stylesheet" href="/static/css/style.css?v=11" />
+        <meta name="theme-color" content="#2e3440" />
+        <link rel="icon" href="/static/favicon.svg" type="image/svg+xml" />
+        <link rel="alternate icon" href="/static/favicon.ico" />
+        <link rel="apple-touch-icon" href="/static/apple-touch-icon.png" />
+        <link rel="manifest" href="/static/site.webmanifest" />
+        <link rel="stylesheet" href="/static/css/style.css?v=12" />
     </head>
     <body>
         <header>
             <div class="header-inner">
                 <div class="logo">
-                    <span class="logo-icon">⬇</span>
+                    <span class="logo-icon">
+                        <svg viewBox="0 0 64 64" width="22" height="22" aria-hidden="true">
+                            <rect x="8" y="20" width="48" height="24" rx="8" fill="currentColor" />
+                            <path d="M27 25.5 L40 32 L27 38.5 Z" fill="var(--bg)" />
+                        </svg>
+                    </span>
                     <span class="logo-text"
                         >YT <span class="accent">Downloader</span></span
                     >
-                </div>
-                <div class="header-status">
-                    <span class="status-dot" id="ws-dot"></span>
-                    <span id="ws-label">Connecting…</span>
                 </div>
             </div>
         </header>

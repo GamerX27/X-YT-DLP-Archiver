@@ -2,22 +2,22 @@
    CSS Custom Properties
    ============================================================ */
 :root {
-    --bg: #0d1117;
-    --bg-card: #161b22;
-    --bg-input: #1c2128;
-    --bg-elevated: #21262d;
-    --border: #30363d;
-    --text: #e6edf3;
-    --text-muted: #8b949e;
-    --text-dim: #656d76;
-    --accent: #58a6ff;
-    --accent-hover: #79b8ff;
-    --accent-glow: rgba(88, 166, 255, 0.18);
-    --success: #3fb950;
-    --warning: #d29922;
-    --error: #f85149;
-    --progress-track: #21262d;
-    --progress-fill: #58a6ff;
+    --bg: #2e3440;
+    --bg-card: #3b4252;
+    --bg-input: #333a47;
+    --bg-elevated: #434c5e;
+    --border: #4c566a;
+    --text: #eceff4;
+    --text-muted: #b8c0d1;
+    --text-dim: #838ea3;
+    --accent: #bf616a;
+    --accent-hover: #cf7b83;
+    --accent-glow: rgba(191, 97, 106, 0.18);
+    --success: #a3be8c;
+    --warning: #ebcb8b;
+    --error: #bf616a;
+    --progress-track: #434c5e;
+    --progress-fill: #bf616a;
     --radius: 10px;
     --radius-sm: 6px;
 }
@@ -65,7 +65,7 @@ a:hover {
    Header
    ============================================================ */
 header {
-    background: rgba(22, 27, 34, 0.92);
+    background: rgba(59, 66, 82, 0.92);
     border-bottom: 1px solid var(--border);
     padding: 14px 24px;
     position: sticky;
@@ -90,8 +90,9 @@ header {
 }
 
 .logo-icon {
-    font-size: 1.3rem;
-    filter: drop-shadow(0 0 6px rgba(88, 166, 255, 0.5));
+    display: inline-flex;
+    color: var(--accent);
+    filter: drop-shadow(0 0 6px var(--accent-glow));
 }
 
 .logo-text {
@@ -102,35 +103,6 @@ header {
 
 .accent {
     color: var(--accent);
-}
-
-.header-status {
-    display: flex;
-    align-items: center;
-    gap: 10px;
-    font-size: 0.82rem;
-    color: var(--text-muted);
-}
-
-.status-dot {
-    width: 7px;
-    height: 7px;
-    border-radius: 50%;
-    background: #555;
-    transition:
-        background 0.3s ease,
-        box-shadow 0.3s ease;
-    flex-shrink: 0;
-}
-
-.status-dot.connected {
-    background: var(--success);
-    box-shadow: 0 0 6px var(--success);
-}
-
-.status-dot.error {
-    background: var(--error);
-    box-shadow: none;
 }
 
 /* ============================================================
@@ -146,8 +118,8 @@ main {
 }
 
 .disk-warning {
-    background: rgba(248, 81, 73, 0.1);
-    border: 1px solid rgba(248, 81, 73, 0.35);
+    background: rgba(191, 97, 106, 0.1);
+    border: 1px solid rgba(191, 97, 106, 0.35);
     color: var(--error);
     border-radius: 8px;
     padding: 12px 16px;
@@ -316,21 +288,21 @@ h2 {
     padding: 2px 8px;
     border-radius: 10px;
     flex-shrink: 0;
-    background: rgba(88, 166, 255, 0.1);
+    background: rgba(191, 97, 106, 0.1);
     color: var(--accent);
-    border: 1px solid rgba(88, 166, 255, 0.2);
+    border: 1px solid rgba(191, 97, 106, 0.2);
 }
 
 .probe-badge.playlist {
-    background: rgba(210, 153, 34, 0.1);
+    background: rgba(235, 203, 139, 0.1);
     color: var(--warning);
-    border-color: rgba(210, 153, 34, 0.25);
+    border-color: rgba(235, 203, 139, 0.25);
 }
 
 .probe-badge.audio {
-    background: rgba(63, 185, 80, 0.1);
+    background: rgba(163, 190, 140, 0.1);
     color: var(--success);
-    border-color: rgba(63, 185, 80, 0.25);
+    border-color: rgba(163, 190, 140, 0.25);
 }
 
 /* ── Resolution picker ───────────────────────────────────── */
@@ -458,7 +430,7 @@ h2 {
 
 #submit-btn {
     background: var(--accent);
-    color: #0d1117;
+    color: var(--text);
     border: none;
     border-radius: var(--radius-sm);
     padding: 10px 22px;
@@ -477,7 +449,7 @@ h2 {
 
 #submit-btn:not(:disabled):hover {
     background: var(--accent-hover);
-    box-shadow: 0 0 16px rgba(88, 166, 255, 0.35);
+    box-shadow: 0 0 16px rgba(191, 97, 106, 0.35);
     transform: translateY(-1px);
 }
 
@@ -528,20 +500,20 @@ h2 {
 }
 
 .task-card.downloading {
-    border-color: rgba(88, 166, 255, 0.35);
-    box-shadow: 0 0 0 1px rgba(88, 166, 255, 0.08) inset;
+    border-color: rgba(191, 97, 106, 0.35);
+    box-shadow: 0 0 0 1px rgba(191, 97, 106, 0.08) inset;
 }
 
 .task-card.completed {
-    border-color: rgba(63, 185, 80, 0.3);
+    border-color: rgba(163, 190, 140, 0.3);
 }
 
 .task-card.failed {
-    border-color: rgba(248, 81, 73, 0.4);
+    border-color: rgba(191, 97, 106, 0.4);
 }
 
 .task-card.analyzing {
-    border-color: rgba(210, 153, 34, 0.35);
+    border-color: rgba(235, 203, 139, 0.35);
 }
 
 .task-header {
@@ -568,9 +540,9 @@ h2 {
 
 .folder-chip {
     font-size: 0.72rem;
-    background: rgba(88, 166, 255, 0.08);
+    background: rgba(191, 97, 106, 0.08);
     color: var(--accent);
-    border: 1px solid rgba(88, 166, 255, 0.15);
+    border: 1px solid rgba(191, 97, 106, 0.15);
     border-radius: 4px;
     padding: 1px 7px;
     max-width: 180px;
@@ -660,7 +632,7 @@ h2 {
     font-weight: 600;
     color: var(--accent);
     white-space: nowrap;
-    background: rgba(88, 166, 255, 0.1);
+    background: rgba(191, 97, 106, 0.1);
     border-radius: 4px;
     padding: 1px 7px;
     flex-shrink: 0;
@@ -705,56 +677,56 @@ h2 {
 }
 
 .badge-pending {
-    background: rgba(139, 148, 158, 0.12);
+    background: rgba(184, 192, 209, 0.12);
     color: var(--text-muted);
 }
 
 .badge-probing {
-    background: rgba(210, 153, 34, 0.12);
+    background: rgba(235, 203, 139, 0.12);
     color: var(--warning);
 }
 
 .badge-analyzing {
-    background: rgba(210, 153, 34, 0.12);
+    background: rgba(235, 203, 139, 0.12);
     color: var(--warning);
     animation: pulse-opacity 1.6s ease-in-out infinite;
 }
 
 .badge-downloading {
-    background: rgba(88, 166, 255, 0.12);
+    background: rgba(191, 97, 106, 0.12);
     color: var(--accent);
     animation: pulse-opacity 1.6s ease-in-out infinite;
 }
 
 .badge-moving {
-    background: rgba(88, 166, 255, 0.08);
+    background: rgba(191, 97, 106, 0.08);
     color: var(--accent);
 }
 
 .badge-completed {
-    background: rgba(63, 185, 80, 0.12);
+    background: rgba(163, 190, 140, 0.12);
     color: var(--success);
 }
 
 .badge-failed {
-    background: rgba(248, 81, 73, 0.12);
+    background: rgba(191, 97, 106, 0.12);
     color: var(--error);
 }
 
 .badge-ordering {
-    background: rgba(88, 166, 255, 0.08);
+    background: rgba(191, 97, 106, 0.08);
     color: var(--accent);
     animation: pulse-opacity 1.6s ease-in-out infinite;
 }
 
 .badge-cancelling {
-    background: rgba(210, 153, 34, 0.12);
+    background: rgba(235, 203, 139, 0.12);
     color: var(--warning);
     animation: pulse-opacity 1.6s ease-in-out infinite;
 }
 
 .badge-cancelled {
-    background: rgba(139, 148, 158, 0.12);
+    background: rgba(184, 192, 209, 0.12);
     color: var(--text-muted);
 }
 
@@ -787,12 +759,12 @@ h2 {
 
 .btn-remove:hover {
     color: var(--error);
-    background: rgba(248, 81, 73, 0.1);
+    background: rgba(191, 97, 106, 0.1);
 }
 
 .btn-cancel {
     background: none;
-    border: 1px solid rgba(210, 153, 34, 0.3);
+    border: 1px solid rgba(235, 203, 139, 0.3);
     color: var(--warning);
     cursor: pointer;
     font-size: 0.78rem;
@@ -806,9 +778,9 @@ h2 {
 }
 
 .btn-cancel:hover {
-    color: #e3a720;
-    background: rgba(210, 153, 34, 0.12);
-    border-color: rgba(210, 153, 34, 0.5);
+    color: #f0d5a0;
+    background: rgba(235, 203, 139, 0.12);
+    border-color: rgba(235, 203, 139, 0.5);
 }
 
 .btn-cancel:disabled {
@@ -818,7 +790,7 @@ h2 {
 
 .btn-retry {
     background: none;
-    border: 1px solid rgba(88, 166, 255, 0.3);
+    border: 1px solid rgba(191, 97, 106, 0.3);
     color: var(--accent);
     cursor: pointer;
     font-size: 0.78rem;
@@ -834,7 +806,7 @@ h2 {
 .btn-retry:hover {
     color: var(--accent-hover);
     background: var(--accent-glow);
-    border-color: rgba(88, 166, 255, 0.5);
+    border-color: rgba(191, 97, 106, 0.5);
 }
 
 .btn-retry:disabled {
@@ -911,12 +883,12 @@ h2 {
 }
 
 .toast.toast-error {
-    border-color: rgba(248, 81, 73, 0.4);
+    border-color: rgba(191, 97, 106, 0.4);
     color: var(--error);
 }
 
 .toast.toast-success {
-    border-color: rgba(63, 185, 80, 0.35);
+    border-color: rgba(163, 190, 140, 0.35);
     color: var(--success);
 }
 
@@ -1147,9 +1119,9 @@ h2 {
     display: inline-flex;
     align-items: center;
     gap: 6px;
-    background: rgba(63, 185, 80, 0.12);
+    background: rgba(163, 190, 140, 0.12);
     color: var(--success);
-    border: 1px solid rgba(63, 185, 80, 0.25);
+    border: 1px solid rgba(163, 190, 140, 0.25);
     border-radius: 20px;
     padding: 4px 12px;
     font-size: 0.82rem;
@@ -1284,7 +1256,7 @@ h2 {
     background: rgba(255, 255, 255, 0.03);
 }
 
-/* Downloads tab — blue */
+/* Downloads tab — accent */
 .tab-btn[data-tab="downloads"].active {
     color: var(--accent);
     border-bottom-color: var(--accent);
@@ -1368,7 +1340,7 @@ h2 {
 }
 
 .btn-monitor-run:hover {
-    background: rgba(63, 185, 80, 0.1);
+    background: rgba(163, 190, 140, 0.1);
     border-color: var(--success);
 }
 
@@ -1398,14 +1370,14 @@ h2 {
 }
 
 .monitor-res {
-    background: rgba(88, 166, 255, 0.1);
+    background: rgba(191, 97, 106, 0.1);
     color: var(--accent);
     padding: 1px 6px;
     border-radius: 3px;
 }
 
 .monitor-numbering {
-    background: rgba(139, 148, 158, 0.1);
+    background: rgba(184, 192, 209, 0.1);
     color: var(--text-muted);
     padding: 1px 6px;
     border-radius: 3px;
@@ -1509,7 +1481,7 @@ h2 {
 .btn-primary {
     background: var(--accent);
     border: none;
-    color: #0d1117;
+    color: var(--text);
     cursor: pointer;
     font-size: 0.88rem;
     font-weight: 600;

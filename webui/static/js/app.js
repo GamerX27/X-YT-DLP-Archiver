@@ -42,8 +42,6 @@ const els = {
   urlInput: () => $("url-input"),
   hiddenRes: () => $("resolution-select"),
   submitBtn: () => $("submit-btn"),
-  wsDot: () => $("ws-dot"),
-  wsLabel: () => $("ws-label"),
   diskWarning: () => $("disk-warning"),
   activeList: () => $("active-list"),
   activeEmpty: () => $("active-empty"),
@@ -599,26 +597,17 @@ const removeTask = (taskId) => {
   updateCounts();
 };
 
-// ── WebSocket ─────────────────────────────────────────────────────────────────
-
-const setWsStatus = (connected) => {
-  els.wsDot().classList.toggle("connected", connected);
-  els.wsDot().classList.toggle("error", !connected);
-  els.wsLabel().textContent = connected ? "Connected" : "Disconnected";
-};
+// ── WebSocket ──────────────────────────────────────────────────────────────────────
 
 const connectWs = () => {
   clearTimeout(wsReconnectTimer);
   const proto = location.protocol === "https:" ? "wss" : "ws";
   ws = new WebSocket(`${proto}://${location.host}/ws`);
 
-  ws.addEventListener("open", () => setWsStatus(true));
   ws.addEventListener("close", () => {
-    setWsStatus(false);
     wsReconnectTimer = setTimeout(connectWs, 3000);
   });
   ws.addEventListener("error", () => {
-    setWsStatus(false);
     ws.close();
   });
 

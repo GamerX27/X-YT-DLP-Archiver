@@ -21,7 +21,7 @@ from downloader import (
 )
 from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect
 from fastapi.requests import Request
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from format_planner import FormatPlanner
@@ -738,6 +738,13 @@ if os.path.isdir(_static_dir):
 @app.get("/")
 async def index(request: Request):
     return templates.TemplateResponse(request, "index.html")
+
+
+@app.get("/favicon.ico", include_in_schema=False)
+async def favicon():
+    # Browsers request /favicon.ico directly regardless of <link rel="icon">;
+    # redirect to the real asset instead of returning a 404.
+    return RedirectResponse(url="/static/favicon.ico")
 
 
 class DownloadRequest(BaseModel):
