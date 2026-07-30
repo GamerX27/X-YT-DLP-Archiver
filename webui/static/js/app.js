@@ -44,7 +44,6 @@ const els = {
   submitBtn: () => $("submit-btn"),
   wsDot: () => $("ws-dot"),
   wsLabel: () => $("ws-label"),
-  modelBadge: () => $("model-badge"),
   diskWarning: () => $("disk-warning"),
   activeList: () => $("active-list"),
   activeEmpty: () => $("active-empty"),
@@ -691,10 +690,9 @@ const fetchHealth = async () => {
   try {
     const res = await fetch("/api/health");
     const data = await res.json();
-    els.modelBadge().textContent = data.ollama_model || "unknown";
     renderDiskWarning(data);
   } catch {
-    els.modelBadge().textContent = "unavailable";
+    // Health endpoint unreachable — disk warning simply stays hidden.
   }
 };
 

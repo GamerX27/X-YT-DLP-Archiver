@@ -24,9 +24,9 @@ from fastapi.requests import Request
 from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
+from format_planner import FormatPlanner
 from jellyfin import JellyfinClient
 from jinja2 import Environment, FileSystemLoader
-from llm_agent import LLMAgent
 from monitor import MonitorStore
 from pydantic import BaseModel
 
@@ -36,7 +36,7 @@ logging.basicConfig(
     datefmt="%H:%M:%S",
 )
 # Show DEBUG from our own modules only
-logging.getLogger("llm_agent").setLevel(logging.DEBUG)
+logging.getLogger("format_planner").setLevel(logging.DEBUG)
 logging.getLogger("downloader").setLevel(logging.DEBUG)
 # Silence noisy third-party loggers
 logging.getLogger("httpx").setLevel(logging.WARNING)
@@ -67,7 +67,7 @@ semaphore: Optional[asyncio.Semaphore] = None
 worker_tasks: List[asyncio.Task] = []
 
 downloader = Downloader()
-llm_agent = LLMAgent()
+format_planner = FormatPlanner()
 jellyfin_client = JellyfinClient()
 monitor_store = MonitorStore()
 
@@ -249,7 +249,7 @@ async def monitor_scheduler() -> None:
             logger.exception("Monitor scheduler error: %s", exc)
 
 
-async def reorder_jellyfin_playlist(dest: Path, agent) -> None:
+async def reorder_jellyfin_playlist(dest: Path, planner) -> None:
     """
     Normalize mtimes of downloaded playlist videos in dest so Jellyfin
     orders episodes by playlist index rather than upload date.
@@ -288,7 +288,7 @@ async def reorder_jellyfin_playlist(dest: Path, agent) -> None:
         logger.info("Jellyfin ordering: dates already strictly ascending — skipping")
         return
 
-    llm_input = [
+    episodes_input = [
         {
             "filename": e["filename"],
             "playlist_index": e["playlist_index"],
@@ -296,7 +296,7 @@ async def reorder_jellyfin_playlist(dest: Path, agent) -> None:
         }
         for e in episodes
     ]
-    ordered = await agent.order_playlist_episodes(llm_input)
+    ordered = await planner.order_playlist_episodes(episodes_input)
     date_map = {item["filename"]: item["new_date"] for item in ordered}
 
     for ep in episodes:
@@ -445,11 +445,11 @@ async def process_task(task_id: str) -> None:
         channel = metadata.get("channel") or metadata.get("uploader") or "Unknown"
         update_task(task_id, title=title, channel=channel)
 
-        # Step 2: Analyze with LLM
+        # Step 2: Compute the download plan
         if _cancelled():
             return
-        update_task(task_id, status="analyzing", status_text="Analyzing with LLM…")
-        plan = await llm_agent.analyze(
+        update_task(task_id, status="analyzing", status_text="Planning download…")
+        plan = await format_planner.analyze(
             metadata,
             task.get("resolution_override"),
             jellyfin_library_type=task.get("jellyfin_library_type"),
@@ -463,7 +463,7 @@ async def process_task(task_id: str) -> None:
         )
 
         # If the user manually selected a destination subfolder in the browser,
-        # override the LLM's folder and use a simple filename template.
+        # override the computed folder and use a simple filename template.
         if task.get("folder_override"):
             plan["folder_path"] = task["folder_override"]
             # For a single track going into an existing folder, keep the title only.
@@ -643,7 +643,7 @@ async def process_task(task_id: str) -> None:
                 status_text="Ordering episodes for Jellyfin…",
             )
             try:
-                await reorder_jellyfin_playlist(final_dest, llm_agent)
+                await reorder_jellyfin_playlist(final_dest, format_planner)
             except Exception as exc:
                 logger.warning(
                     "Jellyfin episode reordering failed (non-fatal): %s", exc
@@ -706,10 +706,6 @@ async def worker() -> None:
 async def lifespan(app: FastAPI):
     global semaphore
     semaphore = asyncio.Semaphore(MAX_CONCURRENT_DOWNLOADS)
-    try:
-        await llm_agent.ensure_model()
-    except Exception:
-        logger.warning("ensure_model failed during startup; continuing anyway")
     for _ in range(MAX_CONCURRENT_DOWNLOADS):
         t = asyncio.create_task(worker())
         worker_tasks.append(t)
@@ -1035,7 +1031,6 @@ async def api_health():
     free_mb = _free_disk_mb(DOWNLOADS_DIR)
     return {
         "status": "ok",
-        "ollama_model": llm_agent.model,
         "disk_free_mb": free_mb,
         "disk_min_mb": MIN_FREE_DISK_MB,
         # True when there isn't enough room to safely start a new download.

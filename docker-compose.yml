@@ -6,12 +6,6 @@ services:
     env_file:
       - .env
     volumes:
-      # Ollama model storage — persisted across rebuilds
-      - ollama_models:/root/.ollama
-      # LLM instructions file — edit without rebuilding
-      - ./webui/instructions.md:/app/instructions.md:ro
-      - ./webui/instructions_jellyfin.md:/app/instructions_jellyfin.md:ro
-      - ./webui/instructions_audio.md:/app/instructions_audio.md:ro
       # Temporary download staging area
       - downloads_tmp:/app/tmp_downloads
       # Persist monitor list across rebuilds
@@ -32,13 +26,13 @@ services:
     restart: unless-stopped
 
     # Health check — Docker marks the container unhealthy if /api/health
-    # stops responding. start_period covers the model pull on first boot.
+    # stops responding.
     healthcheck:
       test: ["CMD", "curl", "-sf", "http://localhost:3050/api/health"]
       interval: 30s
       timeout: 10s
       retries: 3
-      start_period: 180s
+      start_period: 30s
 
     # Log rotation — keeps logs from growing unbounded on the host
     logging:
@@ -47,26 +41,6 @@ services:
         max-size: "10m"
         max-file: "5"
 
-    # ── NVIDIA GPU ────────────────────────────────────────────────────────────
-    # Uncomment the block below to give Ollama access to an NVIDIA GPU.
-    # Requires the NVIDIA Container Toolkit installed on the host.
-    # deploy:
-    #   resources:
-    #     reservations:
-    #       devices:
-    #         - driver: nvidia
-    #           count: all
-    #           capabilities: [gpu]
-
-    # ── AMD ROCm GPU ──────────────────────────────────────────────────────────
-    # Uncomment the lines below for AMD GPU support.
-    # devices:
-    #   - /dev/kfd:/dev/kfd
-    #   - /dev/dri:/dev/dri
-    # group_add:
-    #   - video
-
 volumes:
-  ollama_models:
   downloads_tmp:
   monitors_data:

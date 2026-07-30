@@ -1,6 +1,6 @@
-# YT-DLP Ollama Downloader
+# YT-DLP Downloader
 
-A self-hosted web downloader powered by **yt-dlp** and a local **Ollama** LLM. Paste a URL, pick a quality, and the LLM selects the right format and sorts files into tidy folders — automatically. No cloud, no API keys, no tracking.
+A self-hosted web downloader powered by **yt-dlp**. Paste a URL, pick a quality, and a rule-based planner selects the right format and sorts files into tidy folders — automatically. No cloud, no API keys, no tracking.
 
 ---
 
@@ -12,7 +12,7 @@ A self-hosted web downloader powered by **yt-dlp** and a local **Ollama** LLM. P
 | **Video downloads** | 720p / 1080p / 1440p / 4K — H.264 preferred at ≤ 1080p, best available above |
 | **Audio / YouTube Music** | Detects `music.youtube.com` automatically; downloads best-quality MP3 with cover art, title, artist, and album embedded |
 | **Smart codec selection** | H.264 for ≤ 1080p (no re-encode on most devices); AV1/VP9 for 4K |
-| **LLM format planning** | Local Ollama model picks the format string per URL using dedicated instruction files |
+| **Rule-based format planning** | A pure-Python planner picks the format string per URL from resolution/codec rules — no external service or model |
 | **Auto folder sorting** | Files land in `Channel/`, `Channel/Playlist/`, or `Channel/Videos/` |
 | **Metadata embedding** | MP4/M4A: mutagen MP4 tags. MP3: mutagen ID3 tags (cover art, title, artist, album) |
 | **Playlist archive** | Skips already-downloaded videos across runs using a per-playlist `.yt-dlp-archive` file |
@@ -20,14 +20,14 @@ A self-hosted web downloader powered by **yt-dlp** and a local **Ollama** LLM. P
 | **Retry** | One-click retry for failed or cancelled tasks |
 | **Network resilience** | Automatically retries up to 10 times on transient network errors (10 s between attempts) |
 | **Jellyfin integration** | Pick a library, browse existing subfolders, and trigger a library scan after each download |
-| **Playlist reordering** | After a Jellyfin TV playlist download, an LLM pass normalises file mtimes to match playlist order |
+| **Playlist reordering** | After a Jellyfin TV playlist download, file mtimes are normalised to match playlist order |
 | **Fully self-hosted** | Everything runs in a single container — nothing leaves your network |
 
 ---
 
 ## Architecture
 
-Everything runs inside **one container**: FastAPI serves the UI and runs yt-dlp; Ollama runs as a background process in the same container.
+Everything runs inside **one container**: FastAPI serves the UI and runs yt-dlp, with a small rule-based planner deciding the format string and destination folder from yt-dlp's own metadata.
 
 ```
 Browser
@@ -37,10 +37,10 @@ Browser
 │         ytdlp-downloader         │  network_mode: host → port 3050
 │                                  │
 │  FastAPI + yt-dlp                │
-│       │  metadata + instructions │
+│       │  metadata                │
 │       ▼                          │
-│  Ollama  (127.0.0.1:11434)       │
-│       │  JSON download plan      │
+│  FormatPlanner (pure Python)     │
+│       │  format string + folder  │
 │       ▼                          │
 │  yt-dlp executes plan            │
 └──────────────────────────────────┘
@@ -66,7 +66,7 @@ Browser
    docker compose up -d --build
    ```
 
-3. **Open the UI** — wait for the model to pull on first boot (~1 min):
+3. **Open the UI**:
    ```
    http://localhost:3050
    ```
@@ -78,7 +78,6 @@ Browser
 
    Ready when you see:
    ```
-   [entrypoint] Model 'llama3.2:1b' ready
    INFO:     Application startup complete.
    ```
 
@@ -93,7 +92,6 @@ All configuration is in `.env`. Copy `.env.example` to get started.
 | Variable | Default | Description |
 |---|---|---|
 | `MEDIA_PATH` | *(required)* | Host path for non-Jellyfin downloads, e.g. `/mnt/Media` |
-| `OLLAMA_MODEL` | `llama3.2:1b` | Ollama model tag, e.g. `llama3.1`, `mistral` |
 | `MAX_CONCURRENT_DOWNLOADS` | `2` | Simultaneous yt-dlp jobs |
 | `PUID` / `PGID` | `1000` | User/group ID for ownership of downloaded files |
 | `JELLYFIN_URL` | *(optional)* | Full URL of your Jellyfin server, e.g. `http://192.168.1.10:8096` |
@@ -108,10 +106,7 @@ Leave the three `JELLYFIN_*` variables empty to disable Jellyfin integration; th
 
 1. **Paste a URL.** For `music.youtube.com` the UI switches to Audio mode automatically.
 2. **yt-dlp probes the URL** to fetch metadata: title, channel, playlist info, available resolutions and codecs.
-3. **The LLM reads an instruction file** alongside the metadata and returns a JSON plan with a format string and any extra options.
-   - Video → `instructions.md`
-   - Audio / YouTube Music → `instructions_audio.md`
-   - Jellyfin episode reordering → `instructions_jellyfin.md`
+3. **`FormatPlanner` computes a plan** from that metadata: a format string, output template, and destination folder, using fixed resolution/codec rules (see [`webui/format_planner.py`](webui/format_planner.py)).
 4. **yt-dlp executes the plan.** Progress streams to the browser in real time.
 5. **Post-processing:** thumbnail and metadata are embedded via mutagen; files are moved to the final destination.
 6. **Jellyfin scan** is triggered automatically if a Jellyfin library was selected.
@@ -174,38 +169,6 @@ When a Jellyfin library is selected the folder structure follows the library typ
 
 ---
 
-## LLM Instruction Files
+## Format Planning Rules
 
-Three files control how the LLM plans downloads. All are hot-reloaded — **no rebuild needed** after editing.
-
-| File | Used for |
-|---|---|
-| [`webui/instructions.md`](webui/instructions.md) | Video format selection (codec, resolution fallback chains) |
-| [`webui/instructions_audio.md`](webui/instructions_audio.md) | Audio/MP3 downloads — locks format to `bestaudio/best` + `FFmpegExtractAudio` |
-| [`webui/instructions_jellyfin.md`](webui/instructions_jellyfin.md) | Post-download episode date ordering for Jellyfin playlists |
-
----
-
-## GPU Acceleration
-
-The `docker-compose.yml` includes commented-out blocks for GPU passthrough. Uncomment for your hardware:
-
-**NVIDIA** (requires [NVIDIA Container Toolkit](https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/install-guide.html)):
-```yaml
-deploy:
-  resources:
-    reservations:
-      devices:
-        - driver: nvidia
-          count: all
-          capabilities: [gpu]
-```
-
-**AMD ROCm:**
-```yaml
-devices:
-  - /dev/kfd:/dev/kfd
-  - /dev/dri:/dev/dri
-group_add:
-  - video
-```
+All download planning lives in [`webui/format_planner.py`](webui/format_planner.py) — pure Python, no external service or model involved. To change format selection, codec preferences, or folder layout, edit the methods there directly (`_format_from_resolution`, `_folder_from_summary`, `_folder_for_jellyfin`). Changes take effect on container restart.

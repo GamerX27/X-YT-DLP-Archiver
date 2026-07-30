@@ -20,12 +20,12 @@ help:
 	@echo ""
 	@echo "  make logs            Follow live logs (Ctrl+C to stop)"
 	@echo "  make status          Show container status + health"
-	@echo "  make health          Query both service health endpoints"
+	@echo "  make health          Query the web API health endpoint"
 	@echo "  make shell           Open a bash shell inside container"
 	@echo ""
 	@echo "  make update-yt-dlp   Upgrade yt-dlp inside the running container"
 	@echo "  make clean-tmp       Remove orphaned temp download files"
-	@echo "  make purge           Remove containers AND volumes (loses models!)"
+	@echo "  make purge           Remove containers AND volumes"
 	@echo ""
 
 # ── Lifecycle ─────────────────────────────────────────────────
@@ -58,13 +58,9 @@ status:
 	  "CPU: {{.CPUPerc}}   RAM: {{.MemUsage}}   Net: {{.NetIO}}   Disk: {{.BlockIO}}"
 
 health:
-	@echo "── Web API (/api/health) ──────────────────────────────"
+	@echo "── Web API (/api/health) ────────────────────────"
 	@docker exec $(CONTAINER) curl -sf http://localhost:3050/api/health \
 	  | python3 -m json.tool || echo "  Web API not reachable"
-	@echo ""
-	@echo "── Ollama (/api/tags) ─────────────────────────────────"
-	@docker exec $(CONTAINER) curl -sf http://localhost:11434/api/tags \
-	  | python3 -m json.tool || echo "  Ollama not reachable"
 
 shell:
 	docker exec -it $(CONTAINER) bash
@@ -83,6 +79,6 @@ clean-tmp:
 	  -mmin +120 -exec rm -rf {} + 2>/dev/null && echo "Done" || echo "Nothing to clean"
 
 purge:
-	@echo "WARNING: this will delete all Docker volumes including Ollama models."
+	@echo "WARNING: this will delete all Docker volumes."
 	@read -p "Type YES to confirm: " c && [ "$$c" = "YES" ]
 	$(COMPOSE) down -v

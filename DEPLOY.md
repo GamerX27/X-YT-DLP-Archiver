@@ -6,8 +6,8 @@
 |---|---|---|
 | Docker Engine | 24+ | `docker --version` |
 | Docker Compose plugin | v2 | `docker compose version` |
-| Free RAM | 2 GB min | `free -h` |
-| Free disk | 5 GB min (models + media) | `df -h` |
+| Free RAM | 1 GB min | `free -h` |
+| Free disk | 2 GB min (image + media) | `df -h` |
 
 ---
 
@@ -15,7 +15,7 @@
 
 ```bash
 # Clone or copy the project folder, then:
-cd ytdlp-ollama-webui
+cd X-YT-DLP-Archiver
 
 # Create your env file
 cp .env.example .env
@@ -24,9 +24,8 @@ cp .env.example .env
 Open `.env` and configure it. **All variables below should be present**:
 
 ```env
-# ── Required ────────────────────────────────────────────────────────────────
+# ── Required ──────────────────────────────────────────────────────────────────────
 MEDIA_PATH=/mnt/Media          # host path for normal (non-Jellyfin) downloads
-OLLAMA_MODEL=llama3.2:1b
 WEBUI_PORT=3050
 MAX_CONCURRENT_DOWNLOADS=2
 
@@ -71,10 +70,8 @@ docker compose up -d --build
 ```
 
 **What happens on first boot:**
-1. Docker builds the image (~2-3 min — downloads Ubuntu packages, Python deps, Ollama binary)
-2. Container starts; Ollama server initialises
-3. `llama3.2:1b` model is pulled (~750 MB — takes 1-5 min depending on connection)
-4. FastAPI web server starts on port 3050
+1. Docker builds the image (~1-2 min — downloads Arch packages and Python deps)
+2. FastAPI web server starts on port 3050
 
 Watch it happen live:
 
@@ -87,7 +84,6 @@ docker compose logs -f
 You're ready when you see:
 
 ```
-[entrypoint] Model 'llama3.2:1b' ready
 [entrypoint] Starting web server on :3050...
 INFO:     Application startup complete.
 ```
@@ -109,7 +105,7 @@ If running on a remote server replace `localhost` with the server's IP.
 ```bash
 make status          # container health + resource usage
 make logs            # live log stream
-make health          # query /api/health and Ollama
+make health          # query /api/health
 make shell           # bash inside the container for debugging
 make restart         # restart without rebuilding
 make rebuild         # rebuild image from scratch and restart
@@ -128,7 +124,7 @@ docker compose ps
 ```
 
 The `STATUS` column shows `healthy`, `unhealthy`, or `starting`.
-`starting` is normal for up to 3 minutes on first boot (model pull).
+`starting` is normal for the first few seconds while the web server boots.
 
 ```bash
 # More detail on why it's unhealthy:
@@ -145,9 +141,6 @@ make logs
 # Filter to errors only
 docker compose logs -f | grep -i "error\|exception\|traceback\|failed"
 
-# Ollama-specific lines
-docker compose logs -f | grep -i "ollama\|model\|entrypoint"
-
 # Download activity only
 docker compose logs -f | grep -i "download\|task\|moving"
 ```
@@ -161,7 +154,7 @@ make status
 docker stats ytdlp-downloader
 ```
 
-### Check what Ollama has loaded
+### Check web API health
 
 ```bash
 make health
@@ -203,33 +196,6 @@ Then `make rebuild`.
 
 ---
 
-### Model pull fails / times out
-
-The container will exit if Ollama doesn't start within 90 s or the model pull fails.
-
-```bash
-# Check the error:
-make logs
-
-# Pull manually inside the container:
-make shell
-ollama pull llama3.2:1b
-exit
-make restart
-```
-
----
-
-### Ollama is running but LLM responses are slow
-
-`llama3.2:1b` runs on CPU. On a slow machine every analysis call takes 10-30 s.
-This is normal — the download still starts immediately after the LLM responds.
-
-To skip LLM analysis for testing, the fallback plan in `llm_agent.py` kicks in
-automatically if Ollama times out.
-
----
-
 ### Downloads fail with `Sign in to confirm you're not a bot`
 
 YouTube's bot detection. Fixes in order of effort:
@@ -245,7 +211,7 @@ YouTube's bot detection. Fixes in order of effort:
    ```
    And update `downloader.py` to pass `cookiefile` in the yt-dlp opts.
 
-2. **Add a sleep** — edit `instructions.md` and add `sleep_interval` to `extra_opts`.
+2. **Add a sleep** — edit `format_planner.py` and add `sleep_interval` to the `extra_opts` returned for playlists.
 
 3. **Use a PO Token** — see the [yt-dlp PO Token guide](https://github.com/yt-dlp/yt-dlp/wiki/Extractors#po-token-guide).
 
@@ -289,25 +255,6 @@ make update-yt-dlp
 git pull          # if using git
 make rebuild
 ```
-
-### Change the Ollama model
-
-Edit `.env`:
-
-```env
-OLLAMA_MODEL=llama3.1
-```
-
-Then `make restart` — the entrypoint will pull the new model on next boot.
-Old models stay on disk in the `ollama_models` volume; delete them with:
-
-```bash
-make shell
-ollama rm llama3.2:1b
-exit
-```
-
----
 
 ## 8. Logs location on host
 
