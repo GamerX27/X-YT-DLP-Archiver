@@ -620,14 +620,48 @@ class Downloader:
         return result
 
     @staticmethod
-    def _unique_dest_name(dest_dir: Path, name: str) -> Path:
+    def _read_artist_tag(path: Path) -> Optional[str]:
+        """Best-effort read of the embedded artist tag from an already-tagged
+        media file, so filename collisions can be disambiguated by artist.
+        """
+        suffix = path.suffix.lower()
+        try:
+            if suffix == ".mp3":
+                from mutagen.id3 import ID3
+
+                tags = ID3(str(path))
+                frame = tags.get("TPE1")
+                if frame and frame.text:
+                    return str(frame.text[0])
+            elif suffix in (".mp4", ".m4a", ".m4v", ".mov"):
+                from mutagen.mp4 import MP4
+
+                tags = MP4(str(path)).tags
+                if tags and tags.get("\xa9ART"):
+                    return str(tags["\xa9ART"][0])
+        except Exception as exc:
+            logger.debug("Could not read artist tag from %s: %s", path.name, exc)
+        return None
+
+    @classmethod
+    def _unique_dest_name(cls, dest_dir: Path, name: str, source: Path) -> Path:
         """Return a path under ``dest_dir`` for ``name`` that does not already
-        exist, appending " (2)", " (3)", … before the extension if needed.
+        exist. Prefers appending the source file's artist tag (e.g.
+        "Dynamite-BTS.mp3"); falls back to " (2)", " (3)", … if the artist is
+        unknown or that name is also taken.
         """
         candidate = dest_dir / name
         if not candidate.exists():
             return candidate
         stem, suffix = os.path.splitext(name)
+
+        artist = cls._read_artist_tag(source)
+        if artist:
+            safe_artist = sanitize_path(artist)
+            candidate = dest_dir / f"{stem}-{safe_artist}{suffix}"
+            if not candidate.exists():
+                return candidate
+
         n = 2
         while True:
             candidate = dest_dir / f"{stem} ({n}){suffix}"
@@ -660,8 +694,11 @@ class Downloader:
                             # (e.g. two different tracks both titled
                             # "Dynamite" landing in the same folder). Never
                             # silently clobber an unrelated file — rename the
-                            # incoming one instead.
-                            new_target = cls._unique_dest_name(dest, item.name)
+                            # incoming one instead, tagging it with its
+                            # artist (e.g. "Dynamite-BTS.mp3").
+                            new_target = cls._unique_dest_name(
+                                dest, item.name, item
+                            )
                             logger.warning(
                                 "Destination %s already exists with different "
                                 "content — saving new file as %s instead of "
