@@ -620,12 +620,57 @@ class Downloader:
         return result
 
     @staticmethod
-    def _move_sync(src: Path, dest: Path, task_dir: Path) -> Path:
+    def _unique_dest_name(dest_dir: Path, name: str) -> Path:
+        """Return a path under ``dest_dir`` for ``name`` that does not already
+        exist, appending " (2)", " (3)", … before the extension if needed.
+        """
+        candidate = dest_dir / name
+        if not candidate.exists():
+            return candidate
+        stem, suffix = os.path.splitext(name)
+        n = 2
+        while True:
+            candidate = dest_dir / f"{stem} ({n}){suffix}"
+            if not candidate.exists():
+                return candidate
+            n += 1
+
+    @classmethod
+    def _move_sync(cls, src: Path, dest: Path, task_dir: Path) -> Path:
         dest.parent.mkdir(parents=True, exist_ok=True)
         if src.exists():
             if dest.exists():
                 for item in src.iterdir():
-                    shutil.move(str(item), str(dest / item.name))
+                    target = dest / item.name
+                    if target.exists():
+                        if (
+                            target.is_file()
+                            and item.is_file()
+                            and target.stat().st_size == item.stat().st_size
+                        ):
+                            # Same name + same size — almost certainly a
+                            # re-download of the exact same file. Safe to
+                            # replace, and avoids piling up duplicates on
+                            # retries.
+                            logger.info(
+                                "Overwriting identical-size file at %s", target
+                            )
+                        else:
+                            # Different content sharing the same filename
+                            # (e.g. two different tracks both titled
+                            # "Dynamite" landing in the same folder). Never
+                            # silently clobber an unrelated file — rename the
+                            # incoming one instead.
+                            new_target = cls._unique_dest_name(dest, item.name)
+                            logger.warning(
+                                "Destination %s already exists with different "
+                                "content — saving new file as %s instead of "
+                                "overwriting",
+                                target,
+                                new_target.name,
+                            )
+                            target = new_target
+                    shutil.move(str(item), str(target))
             else:
                 shutil.move(str(src), str(dest))
 
