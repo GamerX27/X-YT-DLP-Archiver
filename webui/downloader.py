@@ -620,9 +620,10 @@ class Downloader:
         return result
 
     @staticmethod
-    def _read_artist_tag(path: Path) -> Optional[str]:
-        """Best-effort read of the embedded artist tag from an already-tagged
-        media file, so filename collisions can be disambiguated by artist.
+    def _read_tags(path: Path) -> tuple[Optional[str], Optional[str]]:
+        """Best-effort read of the embedded (title, artist) tags from an
+        already-tagged media file, used to tell whether two files sharing a
+        filename are actually the same track or genuinely different songs.
         """
         suffix = path.suffix.lower()
         try:
@@ -630,18 +631,47 @@ class Downloader:
                 from mutagen.id3 import ID3
 
                 tags = ID3(str(path))
-                frame = tags.get("TPE1")
-                if frame and frame.text:
-                    return str(frame.text[0])
+                title_frame = tags.get("TIT2")
+                artist_frame = tags.get("TPE1")
+                title = str(title_frame.text[0]) if title_frame and title_frame.text else None
+                artist = str(artist_frame.text[0]) if artist_frame and artist_frame.text else None
+                return title, artist
             elif suffix in (".mp4", ".m4a", ".m4v", ".mov"):
                 from mutagen.mp4 import MP4
 
                 tags = MP4(str(path)).tags
-                if tags and tags.get("\xa9ART"):
-                    return str(tags["\xa9ART"][0])
+                title = str(tags["\xa9nam"][0]) if tags and tags.get("\xa9nam") else None
+                artist = str(tags["\xa9ART"][0]) if tags and tags.get("\xa9ART") else None
+                return title, artist
         except Exception as exc:
-            logger.debug("Could not read artist tag from %s: %s", path.name, exc)
-        return None
+            logger.debug("Could not read tags from %s: %s", path.name, exc)
+        return None, None
+
+    @classmethod
+    def _read_artist_tag(cls, path: Path) -> Optional[str]:
+        return cls._read_tags(path)[1]
+
+    @classmethod
+    def _is_same_track(cls, target: Path, item: Path) -> bool:
+        """Decide whether ``target`` (existing file) and ``item`` (incoming
+        file) are the same track, so it is safe to overwrite ``target``
+        instead of treating this as a genuine filename collision.
+        """
+        target_title, target_artist = cls._read_tags(target)
+        item_title, item_artist = cls._read_tags(item)
+        if target_title is not None or item_title is not None:
+            # At least one file has readable tags — trust them over size,
+            # since two different songs can coincidentally share a byte size.
+            norm = lambda s: (s or "").strip().casefold()
+            return norm(target_title) == norm(item_title) and norm(
+                target_artist
+            ) == norm(item_artist)
+        # Neither file has readable tags (e.g. non-audio/video file such as
+        # a leftover archive marker) — fall back to a size comparison.
+        try:
+            return target.stat().st_size == item.stat().st_size
+        except OSError:
+            return False
 
     @classmethod
     def _unique_dest_name(cls, dest_dir: Path, name: str, source: Path) -> Path:
@@ -680,14 +710,14 @@ class Downloader:
                         if (
                             target.is_file()
                             and item.is_file()
-                            and target.stat().st_size == item.stat().st_size
+                            and cls._is_same_track(target, item)
                         ):
-                            # Same name + same size — almost certainly a
-                            # re-download of the exact same file. Safe to
-                            # replace, and avoids piling up duplicates on
-                            # retries.
+                            # Same filename + matching title/artist tags —
+                            # this is a re-download of the exact same track.
+                            # Safe to replace, and avoids piling up
+                            # duplicates on retries.
                             logger.info(
-                                "Overwriting identical-size file at %s", target
+                                "Overwriting matching track at %s", target
                             )
                         else:
                             # Different content sharing the same filename
