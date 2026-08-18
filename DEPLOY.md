@@ -196,6 +196,19 @@ Then `make rebuild`.
 
 ---
 
+### Downloads fail with `HTTP Error 403: Forbidden`
+
+This happens when the YouTube player client yt-dlp used to extract the media doesn't have a valid PO Token for the actual download step. The container defaults to the `android` client, which doesn't need one. If it starts happening again, try another client (or a combination) via `.env`:
+
+```env
+YOUTUBE_PLAYER_CLIENT=android
+# or: YOUTUBE_PLAYER_CLIENT=android,web
+```
+
+Then `make restart` (no rebuild needed).
+
+---
+
 ### Downloads fail with `Sign in to confirm you're not a bot`
 
 YouTube's bot detection. Fixes in order of effort:

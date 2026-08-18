@@ -97,6 +97,7 @@ All configuration is in `.env`. Copy `.env.example` to get started.
 | `JELLYFIN_URL` | *(optional)* | Full URL of your Jellyfin server, e.g. `http://192.168.1.10:8096` |
 | `JELLYFIN_API_KEY` | *(optional)* | API key from Jellyfin → Admin → API Keys |
 | `JELLYFIN_MEDIA_PATH` | *(optional)* | Host path that covers all Jellyfin libraries — mounted at the same path inside the container |
+| `YOUTUBE_PLAYER_CLIENT` | `android` | yt-dlp YouTube player client(s) used for extraction, comma-separated. Change this if downloads start failing with `HTTP Error 403: Forbidden` |
 
 Leave the three `JELLYFIN_*` variables empty to disable Jellyfin integration; the toggle won't appear in the UI.
 

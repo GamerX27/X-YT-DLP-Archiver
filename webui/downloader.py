@@ -47,6 +47,16 @@ class DownloadCancelled(Exception):
 _PUID = int(os.getenv("PUID", "1000"))
 _PGID = int(os.getenv("PGID", "1000"))
 
+_YOUTUBE_PLAYER_CLIENT = [
+    c.strip() for c in os.getenv("YOUTUBE_PLAYER_CLIENT", "android").split(",") if c.strip()
+]
+
+
+def _base_extractor_args() -> Dict[str, Any]:
+    if not _YOUTUBE_PLAYER_CLIENT:
+        return {}
+    return {"youtube": {"player_client": _YOUTUBE_PLAYER_CLIENT}}
+
 
 # YouTube "list" IDs that are dynamically generated mixes/radios. These have
 # no standalone playlist page, so they must NOT be rewritten to /playlist —
@@ -426,6 +436,7 @@ class Downloader:
             "extract_flat": True,
             "skip_download": True,
             "playlist_items": "1:5",
+            "extractor_args": _base_extractor_args(),
         }
         loop = asyncio.get_event_loop()
         info = await loop.run_in_executor(None, self._probe_sync, url, opts)
@@ -538,6 +549,7 @@ class Downloader:
         # extractor only returns the first API page (100 items) as a list.
         # Setting lazy_playlist=False loads all pages eagerly upfront.
         opts["lazy_playlist"] = False
+        opts["extractor_args"] = _base_extractor_args()
         # Always write the thumbnail to disk so _EmbedPP can pick it up.
         # For video it is embedded as MP4 cover art; for audio as ID3 APIC.
         opts["writethumbnail"] = True
