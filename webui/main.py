@@ -29,6 +29,7 @@ from jellyfin import JellyfinClient
 from jinja2 import Environment, FileSystemLoader
 from monitor import MonitorStore
 from pydantic import BaseModel
+from settings import SettingsStore
 
 logging.basicConfig(
     level=logging.INFO,
@@ -70,6 +71,9 @@ downloader = Downloader()
 format_planner = FormatPlanner()
 jellyfin_client = JellyfinClient()
 monitor_store = MonitorStore()
+settings_store = SettingsStore()
+
+DEFAULT_MUSIC_FOLDER_KEY = "default_music_folder"
 
 
 async def broadcast(msg: Dict[str, Any]) -> None:
@@ -856,6 +860,30 @@ async def api_browse(path: str):
         return {"folders": []}
 
 
+class DefaultMusicFolderRequest(BaseModel):
+    jellyfin_library_id: str
+    jellyfin_library_name: Optional[str] = None
+    jellyfin_library_path: Optional[str] = None
+    jellyfin_library_type: Optional[str] = None
+    folder_override: Optional[str] = None  # relative subfolder within the library
+
+
+@app.get("/api/settings/default-music-folder")
+async def api_get_default_music_folder():
+    return settings_store.get(DEFAULT_MUSIC_FOLDER_KEY)
+
+
+@app.post("/api/settings/default-music-folder")
+async def api_set_default_music_folder(body: DefaultMusicFolderRequest):
+    return settings_store.set(DEFAULT_MUSIC_FOLDER_KEY, body.model_dump())
+
+
+@app.delete("/api/settings/default-music-folder")
+async def api_clear_default_music_folder():
+    settings_store.clear(DEFAULT_MUSIC_FOLDER_KEY)
+    return {"cleared": True}
+
+
 @app.post("/api/download")
 async def api_download(body: DownloadRequest):
     existing = _active_task_for_url(body.url)
@@ -870,6 +898,20 @@ async def api_download(body: DownloadRequest):
     # folders/archives (one under the Jellyfin library, one under MEDIA_DIR).
     # The user's explicit choices in the form still take precedence.
     monitor = _monitor_for_url(body.url)
+    is_music_link = "music.youtube.com" in body.url
+    if monitor is None and is_music_link and not body.jellyfin_library_id:
+        # No monitor and no explicit destination — fall back to the user's
+        # configured default music folder, if one was set (see
+        # /api/settings/default-music-folder). Mirrors the monitor-routing
+        # logic above so calling /api/download directly still benefits from it.
+        default_folder = settings_store.get(DEFAULT_MUSIC_FOLDER_KEY)
+        if default_folder:
+            body.jellyfin_library_id = default_folder.get("jellyfin_library_id")
+            body.jellyfin_library_name = default_folder.get("jellyfin_library_name")
+            body.jellyfin_library_path = default_folder.get("jellyfin_library_path")
+            body.jellyfin_library_type = default_folder.get("jellyfin_library_type")
+            if not body.folder_override:
+                body.folder_override = default_folder.get("folder_override")
     if monitor is not None:
         if not body.jellyfin_library_id and monitor.get("jellyfin_library_id"):
             body.jellyfin_library_id = monitor.get("jellyfin_library_id")

@@ -32,6 +32,7 @@ let musicModeActive = false;
 let folderBrowserBase = ""; // root path of selected library
 let folderBrowserCurrent = ""; // current path being browsed (absolute)
 let selectedFolderOverride = null; // relative path the user picked (e.g. "Mixes")
+let defaultMusicFolder = null; // { jellyfin_library_id, jellyfin_library_name, jellyfin_library_path, jellyfin_library_type, folder_override } or null
 
 // ── DOM helpers ───────────────────────────────────────────────────────────────
 
@@ -80,6 +81,7 @@ const els = {
   folderBrowserPath: () => $("folder-browser-path"),
   folderBrowserBack: () => $("folder-browser-back"),
   folderBrowserClear: () => $("folder-browser-clear"),
+  folderBrowserDefault: () => $("folder-browser-default"),
   audioModeRow: () => $("audio-mode-row"),
 };
 
@@ -181,6 +183,7 @@ const renderFolderBrowser = async (path) => {
   const rel = folderRelative(path);
   els.folderBrowserPath().textContent = rel || "(library root)";
   els.folderBrowserBack().hidden = path === folderBrowserBase;
+  updateSetDefaultButton();
 
   const grid = els.folderBrowserGrid();
   grid.innerHTML = '<span class="folder-loading">Loading…</span>';
@@ -236,6 +239,91 @@ const closeFolderBrowser = () => {
   folderBrowserBase = "";
   folderBrowserCurrent = "";
   selectedFolderOverride = null;
+};
+
+// ── Default music folder ─────────────────────────────────────────────────────
+// Lets the user pin a Jellyfin music library (+ optional subfolder) so it's
+// selected automatically whenever a music.youtube.com link is pasted.
+
+const fetchDefaultMusicFolder = async () => {
+  try {
+    const resp = await fetch("/api/settings/default-music-folder");
+    if (!resp.ok) return;
+    const data = await resp.json();
+    defaultMusicFolder = data && data.jellyfin_library_id ? data : null;
+  } catch {
+    // Non-fatal — the default just won't be auto-applied this session.
+  }
+};
+
+const isCurrentDefaultMusicFolder = () =>
+  !!defaultMusicFolder &&
+  !!selectedJfLibrary &&
+  defaultMusicFolder.jellyfin_library_id === selectedJfLibrary.id &&
+  (defaultMusicFolder.folder_override || null) ===
+    (selectedFolderOverride || null);
+
+const updateSetDefaultButton = () => {
+  const btn = els.folderBrowserDefault();
+  if (!btn) return;
+  const isDefault = isCurrentDefaultMusicFolder();
+  btn.textContent = isDefault ? "★ Default for Music links" : "☆ Set as default";
+  btn.classList.toggle("is-default", isDefault);
+};
+
+const handleSetDefaultMusicFolder = async () => {
+  if (!selectedJfLibrary) return;
+  const btn = els.folderBrowserDefault();
+  btn.disabled = true;
+  try {
+    if (isCurrentDefaultMusicFolder()) {
+      await fetch("/api/settings/default-music-folder", { method: "DELETE" });
+      defaultMusicFolder = null;
+      showToast("Default music folder cleared", "success");
+    } else {
+      const resp = await fetch("/api/settings/default-music-folder", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          jellyfin_library_id: selectedJfLibrary.id,
+          jellyfin_library_name: selectedJfLibrary.name,
+          jellyfin_library_path: selectedJfLibrary.path,
+          jellyfin_library_type: selectedJfLibrary.type,
+          folder_override: selectedFolderOverride || null,
+        }),
+      });
+      if (!resp.ok) throw new Error("failed");
+      defaultMusicFolder = await resp.json();
+      showToast("Set as default folder for Music links", "success");
+    }
+  } catch {
+    showToast("Failed to update default music folder", "error");
+  } finally {
+    btn.disabled = false;
+    updateSetDefaultButton();
+  }
+};
+
+// Auto-select the saved default music library/folder for a music.youtube.com
+// link. Returns true if applied so the caller can skip its own fallback.
+const applyDefaultMusicFolder = () => {
+  if (!defaultMusicFolder?.jellyfin_library_id) return false;
+  const lib = jellyfinLibraries.find(
+    (l) => l.id === defaultMusicFolder.jellyfin_library_id,
+  );
+  if (!lib) return false;
+
+  selectedJfLibrary = lib;
+  selectedFolderOverride = defaultMusicFolder.folder_override || null;
+  renderJellyfinLibraries();
+  els.jellyfinBtnText().textContent = selectedFolderOverride
+    ? `${lib.name} › ${selectedFolderOverride}`
+    : lib.name;
+  els.submitBtn().disabled = !selectedRes;
+  // Keep the subfolder browser collapsed — the default already covers it.
+  // The library picker stays open (via setJellyfinOpen) so the choice is visible.
+  els.folderBrowser().hidden = true;
+  return true;
 };
 
 const renderJellyfinLibraries = () => {
@@ -418,15 +506,19 @@ const applyAudioMode = ({ title, channel, is_playlist }) => {
   renderJellyfinLibraries(); // re-render with music filter
   showProbeInfo(title, channel, is_playlist, "audio");
 
-  // Auto-expand Jellyfin and select the music library so the folder browser
-  // appears without extra clicks.
+  // Auto-expand Jellyfin and select a destination so downloading needs no
+  // extra clicks: prefer the user's saved default music folder, falling
+  // back to the single music library (if there's exactly one) with its
+  // subfolder browser open for manual choice.
   if (jellyfinEnabled) {
     setJellyfinOpen(true);
-    const musicLibs = jellyfinLibraries.filter(
-      (l) => (l.type || "").toLowerCase() === "music",
-    );
-    if (musicLibs.length === 1) {
-      selectJfLibrary(musicLibs[0]);
+    if (!applyDefaultMusicFolder()) {
+      const musicLibs = jellyfinLibraries.filter(
+        (l) => (l.type || "").toLowerCase() === "music",
+      );
+      if (musicLibs.length === 1) {
+        selectJfLibrary(musicLibs[0]);
+      }
     }
   }
 };
@@ -1161,7 +1253,9 @@ document.addEventListener("DOMContentLoaded", () => {
       els.jellyfinBtnText().textContent = selectedJfLibrary.name;
     renderFolderBrowser(folderBrowserBase);
   });
+  els.folderBrowserDefault().addEventListener("click", handleSetDefaultMusicFolder);
   initJellyfin();
+  fetchDefaultMusicFolder();
 
   updateCounts();
 });

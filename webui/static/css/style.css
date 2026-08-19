@@ -1178,6 +1178,32 @@ h2 {
     border-color: var(--text-muted);
 }
 
+.folder-browser-default {
+    background: none;
+    border: 1px solid var(--border);
+    color: var(--text-muted);
+    cursor: pointer;
+    font-size: 0.75rem;
+    padding: 3px 8px;
+    border-radius: 4px;
+    white-space: nowrap;
+    transition:
+        color 0.15s,
+        border-color 0.15s,
+        background 0.15s;
+}
+
+.folder-browser-default:hover {
+    color: var(--text);
+    border-color: var(--text-muted);
+}
+
+.folder-browser-default.is-default {
+    color: var(--accent);
+    border-color: var(--accent);
+    background: var(--accent-glow);
+}
+
 .folder-browser-grid {
     display: flex;
     flex-wrap: wrap;
