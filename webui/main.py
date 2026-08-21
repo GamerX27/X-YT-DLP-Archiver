@@ -157,7 +157,6 @@ async def run_monitor(monitor: Dict[str, Any]) -> None:
     monitor_store.set_status(monitor_id, "checking")
     await broadcast({"type": "monitors_update", "monitors": monitor_store.all()})
 
-    # ── Step 1: probe the playlist to get its current total count ─────────────
     playlist_count = 0
     try:
         meta = await downloader.probe_url(monitor["url"])
@@ -165,7 +164,6 @@ async def run_monitor(monitor: Dict[str, Any]) -> None:
     except Exception as exc:
         logger.warning("Monitor %s probe failed: %s", monitor_id, exc)
 
-    # ── Step 2: check how many are already in the download archive ────────────
     archive_count = _archive_count(monitor)
 
     monitor_store.update(
@@ -175,7 +173,6 @@ async def run_monitor(monitor: Dict[str, Any]) -> None:
     )
     await broadcast({"type": "monitors_update", "monitors": monitor_store.all()})
 
-    # ── Step 3: skip if nothing new ───────────────────────────────────────────
     if playlist_count > 0 and archive_count >= playlist_count:
         logger.info(
             "Monitor %s up-to-date (%d/%d)", monitor_id, archive_count, playlist_count
@@ -185,7 +182,6 @@ async def run_monitor(monitor: Dict[str, Any]) -> None:
         await broadcast({"type": "monitors_update", "monitors": monitor_store.all()})
         return
 
-    # ── Step 3b: skip if a download for this playlist is already running ───────
     # The download archive is only written as each video finishes, so during a
     # long playlist run archive_count stays below playlist_count for minutes.
     # Without this guard the 60 s scheduler would keep firing and enqueue a
@@ -201,7 +197,6 @@ async def run_monitor(monitor: Dict[str, Any]) -> None:
         await broadcast({"type": "monitors_update", "monitors": monitor_store.all()})
         return
 
-    # ── Step 4: enqueue a download task ──────────────────────────────────────
     task_id = str(uuid.uuid4())
     task = {
         "id": task_id,
@@ -435,7 +430,6 @@ async def process_task(task_id: str) -> None:
         return False
 
     try:
-        # Step 1: Probe
         if _cancelled():
             return
         resolved_url = normalize_playlist_url(task["url"])
@@ -449,7 +443,6 @@ async def process_task(task_id: str) -> None:
         channel = metadata.get("channel") or metadata.get("uploader") or "Unknown"
         update_task(task_id, title=title, channel=channel)
 
-        # Step 2: Compute the download plan
         if _cancelled():
             return
         update_task(task_id, status="analyzing", status_text="Planning download…")
@@ -512,7 +505,6 @@ async def process_task(task_id: str) -> None:
             except Exception as exc:
                 logger.warning("Could not set up download archive (non-fatal): %s", exc)
 
-        # Step 3: Download
         if _cancelled():
             return
 
@@ -589,7 +581,6 @@ async def process_task(task_id: str) -> None:
             )
             return
 
-        # Step 4: Move
         if _cancelled():
             return
         jellyfin_path = task.get("jellyfin_library_path")
@@ -626,7 +617,6 @@ async def process_task(task_id: str) -> None:
             except OSError as exc:
                 logger.warning("Could not commit download archive (non-fatal): %s", exc)
 
-        # Trigger Jellyfin library scan after move
         jf_lib_id = task.get("jellyfin_library_id")
         if jf_lib_id:
             try:
@@ -635,7 +625,6 @@ async def process_task(task_id: str) -> None:
             except Exception as jf_exc:
                 logger.warning("Jellyfin refresh failed (non-fatal): %s", jf_exc)
 
-        # Step 5: Reorder episodes for Jellyfin (video playlist only, skip for audio)
         if (
             plan.get("content_type") == "playlist"
             and task.get("jellyfin_library_path")
@@ -736,9 +725,6 @@ if os.path.isdir(_static_dir):
     app.mount("/static", StaticFiles(directory=_static_dir), name="static")
 
 
-# ── Routes ──────────────────────────────────────────────────────────────────
-
-
 @app.get("/")
 async def index(request: Request):
     return templates.TemplateResponse(request, "index.html")
@@ -761,9 +747,7 @@ class DownloadRequest(BaseModel):
     folder_override: Optional[str] = (
         None  # relative subfolder within the library (user-selected)
     )
-    include_playlist_index: Optional[bool] = (
-        True  # Whether to include numbering in playlist filenames
-    )
+    include_playlist_index: Optional[bool] = True
 
 
 class ProbeRequest(BaseModel):
@@ -969,9 +953,6 @@ async def api_tasks():
     return list(tasks.values())
 
 
-# ── Monitor routes ───────────────────────────────────────────────────────────
-
-
 class MonitorRequest(BaseModel):
     url: str
     name: Optional[str] = None
@@ -984,9 +965,7 @@ class MonitorRequest(BaseModel):
     jellyfin_library_type: Optional[str] = None
     folder_override: Optional[str] = None
     enabled: bool = True
-    include_playlist_index: bool = (
-        True  # Whether to include numbering in playlist filenames
-    )
+    include_playlist_index: bool = True
 
 
 @app.get("/api/monitors")

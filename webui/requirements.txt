@@ -3,3 +3,6 @@ uvicorn[standard]
 httpx
 python-multipart
 mutagen
+jinja2
+yt-dlp
+yt-dlp-ejs

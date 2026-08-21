@@ -18,8 +18,6 @@ class FormatPlanner:
     purely from yt-dlp metadata — no external service or model involved.
     """
 
-    # ── Helpers ───────────────────────────────────────────────────────────────
-
     def _summarize_metadata(self, metadata: Dict[str, Any]) -> Dict[str, Any]:
         formats = metadata.get("formats") or []
 
@@ -149,7 +147,6 @@ class FormatPlanner:
                 or "Unknown"
             )
             if is_playlist and playlist:
-                # Album download: Artist/Album/
                 folder = f"{artist}/{playlist}"
                 template = (
                     "%(playlist_index)02d - %(title)s.%(ext)s"
@@ -157,7 +154,6 @@ class FormatPlanner:
                     else "%(title)s.%(ext)s"
                 )
             else:
-                # Single track: Artist/
                 folder = artist
                 template = "%(title)s.%(ext)s"
             return artist, playlist or "", folder, template
@@ -191,8 +187,8 @@ class FormatPlanner:
                         "preferredquality": "0",  # VBR best (~320 kbps)
                     }
                 ],
-                "embedthumbnail": True,  # --embed-thumbnail
-                "addmetadata": True,  # --add-metadata
+                "embedthumbnail": True,
+                "addmetadata": True,
             }
         if resolution_override == "720p":
             return (
@@ -217,8 +213,6 @@ class FormatPlanner:
                 "/bestvideo[height<=2160]+bestaudio/bestvideo+bestaudio/best"
             ), {}
         return "bestvideo+bestaudio/best", {}
-
-    # ── Public API ────────────────────────────────────────────────────────────
 
     async def analyze(
         self,

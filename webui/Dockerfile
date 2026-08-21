@@ -1,32 +1,25 @@
-FROM archlinux:latest
+# Deno is required by yt-dlp-ejs to solve YouTube's JS challenges.
+# Pulling the official prebuilt binary avoids a curl|sh install script.
+FROM denoland/deno:bin AS deno
 
-# Full system update then install everything from the official Arch repos:
-#   yt-dlp        — https://archlinux.org/packages/extra/any/yt-dlp/
-#   yt-dlp-ejs    — https://archlinux.org/packages/extra/any/yt-dlp-ejs/
-#   ffmpeg        — video merging / re-encoding
-#   python        — runtime for the web app
-#   python-pip    — needed to install web framework deps into the venv
-RUN pacman -Syu --noconfirm && \
-    pacman -S --noconfirm \
-        yt-dlp \
-        yt-dlp-ejs \
+FROM python:3.13-slim-bookworm
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
         ffmpeg \
-        python \
-        python-pip \
-        python-jinja \
-        python-aiofiles \
         curl \
-    && pacman -Scc --noconfirm
+        ca-certificates \
+    && rm -rf /var/lib/apt/lists/*
+
+COPY --from=deno /deno /usr/local/bin/deno
 
 WORKDIR /app
 
-# Venv with --system-site-packages so the pacman-installed yt_dlp module
-# is importable from inside the venv without duplicating it via pip.
-RUN python -m venv --system-site-packages /app/venv
+RUN python -m venv /app/venv
 ENV PATH="/app/venv/bin:$PATH"
 
 COPY requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt
+RUN pip install --no-cache-dir --upgrade pip && \
+    pip install --no-cache-dir --upgrade -r requirements.txt
 
 COPY . .
 

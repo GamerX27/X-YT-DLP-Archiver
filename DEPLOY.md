@@ -70,7 +70,7 @@ docker compose up -d --build
 ```
 
 **What happens on first boot:**
-1. Docker builds the image (~1-2 min — downloads Arch packages and Python deps)
+1. Docker builds the image (~1-2 min — downloads Debian packages, the Deno binary, and Python deps)
 2. FastAPI web server starts on port 3050
 
 Watch it happen live:

@@ -210,8 +210,6 @@ class _EmbedPP(PostProcessor):
                 pass
         return [], info
 
-    # ── helpers ──────────────────────────────────────────────────────────────
-
     @staticmethod
     def _find_thumbnail(info: Dict[str, Any], video_path: Path) -> Optional[Path]:
         """Locate the thumbnail WriteThumbnailPP wrote to disk."""
@@ -255,7 +253,6 @@ class _EmbedPP(PostProcessor):
                 video.add_tags()
             tags = video.tags
 
-            # Cover art
             if thumb and thumb.exists():
                 img_fmt = (
                     MP4Cover.FORMAT_JPEG
@@ -264,7 +261,6 @@ class _EmbedPP(PostProcessor):
                 )
                 tags["covr"] = [MP4Cover(thumb.read_bytes(), imageformat=img_fmt)]
 
-            # Title
             if info.get("title"):
                 tags["\xa9nam"] = [info["title"]]
 
@@ -285,7 +281,6 @@ class _EmbedPP(PostProcessor):
             if album:
                 tags["\xa9alb"] = [album]
 
-            # Upload date
             # yt-dlp stores YYYYMMDD in info['upload_date'] (may be None even if
             # the key exists).  Fall back to the Unix timestamp when absent.
             # Embed as ISO YYYY-MM-DD so Jellyfin parses the year reliably, and
@@ -303,7 +298,6 @@ class _EmbedPP(PostProcessor):
             if date_iso:
                 tags["\xa9day"] = [date_iso]
 
-            # Description
             description = info.get("description") or ""
             if description:
                 tags["\xa9cmt"] = [description[:2000]]
@@ -345,7 +339,6 @@ class _EmbedPP(PostProcessor):
             if audio.tags is None:
                 audio.add_tags()
 
-            # Cover art
             if thumb and thumb.exists():
                 mime = (
                     "image/jpeg"
@@ -362,7 +355,6 @@ class _EmbedPP(PostProcessor):
                     )
                 )
 
-            # Title
             if info.get("title"):
                 audio.tags.add(TIT2(encoding=3, text=[info["title"]]))
 
@@ -377,7 +369,6 @@ class _EmbedPP(PostProcessor):
                 audio.tags.add(TPE1(encoding=3, text=[artist]))  # lead artist
                 audio.tags.add(TPE2(encoding=3, text=[artist]))  # album artist
 
-            # Album
             album = info.get("album") or info.get("playlist_title")
             if album:
                 audio.tags.add(TALB(encoding=3, text=[album]))
@@ -390,8 +381,6 @@ class _EmbedPP(PostProcessor):
 
 
 class Downloader:
-    # ── Date helpers ───────────────────────────────────────────────────────
-
     @staticmethod
     def set_video_date(path: Path, iso_date: str) -> None:
         """Set both the embedded date tag and the file mtime of an MP4 to
@@ -424,8 +413,6 @@ class Downloader:
         except OSError as exc:
             logger.warning("Could not set mtime for %s: %s", path.name, exc)
 
-    # ── Probe ─────────────────────────────────────────────────────────────
-
     async def probe_url(self, url: str) -> Dict[str, Any]:
         # Use the full playlist tab instead of a capped watch-page panel so the
         # reported playlist_count matches what will actually be downloaded.
@@ -450,8 +437,6 @@ class Downloader:
             except Exception as exc:
                 logger.warning("probe failed for %s: %s", url, exc)
                 return None
-
-    # ── Download ─────────────────────────────────────────────────────────────
 
     async def download(
         self,
@@ -532,12 +517,10 @@ class Downloader:
             "progress_hooks": [progress_hook],
             "noprogress": True,
             **extra_opts,
-            # Hard overrides — LLM cannot change these.
+            # Placed after the extra_opts spread so it can't be overridden.
             "keepvideo": False,
         }
-        # Strip any playlist-capping options the LLM may have hallucinated.
-        # Small models like llama3.2:1b sometimes add max_downloads or
-        # playlistend which silently truncates long playlists.
+        # extra_opts must never cap a playlist — strip these if present.
         for _cap_key in (
             "max_downloads",
             "playlistend",
@@ -616,8 +599,6 @@ class Downloader:
             if f.is_file() and f.suffix.lower() in thumb_exts:
                 logger.info("Removed leftover thumbnail: %s", f.name)
                 f.unlink(missing_ok=True)
-
-    # ── Move ─────────────────────────────────────────────────────────────────
 
     async def move_to_media(
         self, task_dir: Path, folder_path: str, media_dir: str
@@ -755,7 +736,6 @@ class Downloader:
 
         # Fix ownership so the host user can move/delete files without sudo.
         try:
-            # Fix dest and everything inside it.
             for path in dest.rglob("*"):
                 os.chown(path, _PUID, _PGID)
                 path.chmod(0o755 if path.is_dir() else 0o644)

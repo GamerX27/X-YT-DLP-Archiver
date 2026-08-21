@@ -1,15 +1,8 @@
-# ──────────────────────────────────────────────────────────────
-#  YouTube Downloader — management commands
-#  Usage: make <target>
-# ──────────────────────────────────────────────────────────────
-
 CONTAINER  := ytdlp-downloader
 COMPOSE    := docker compose
 
 .PHONY: help up down restart rebuild logs status health shell \
         update-yt-dlp clean-tmp purge
-
-# ── Default ───────────────────────────────────────────────────
 
 help:
 	@echo ""
@@ -28,8 +21,6 @@ help:
 	@echo "  make purge           Remove containers AND volumes"
 	@echo ""
 
-# ── Lifecycle ─────────────────────────────────────────────────
-
 up:
 	@[ -f .env ] || { echo "ERROR: .env not found — copy .env.example first"; exit 1; }
 	$(COMPOSE) up -d --build
@@ -43,8 +34,6 @@ restart:
 rebuild:
 	$(COMPOSE) down
 	$(COMPOSE) up -d --build
-
-# ── Observability ─────────────────────────────────────────────
 
 logs:
 	$(COMPOSE) logs -f --tail=200
@@ -64,8 +53,6 @@ health:
 
 shell:
 	docker exec -it $(CONTAINER) bash
-
-# ── Maintenance ───────────────────────────────────────────────
 
 update-yt-dlp:
 	@echo "Upgrading yt-dlp inside the running container..."

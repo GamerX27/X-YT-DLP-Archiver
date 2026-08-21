@@ -33,12 +33,12 @@ def _translate_path(jf_path: str) -> str:
         return jf_path
 
     host_root = Path(JELLYFIN_MEDIA_PATH)
-    anchor = host_root.name  # e.g. "Media"
-    jf_parts = Path(jf_path).parts  # e.g. ('/', 'Media', 'YT')
+    anchor = host_root.name
+    jf_parts = Path(jf_path).parts
 
     for i, part in enumerate(jf_parts):
         if part == anchor:
-            remainder = jf_parts[i + 1 :]  # everything after the anchor
+            remainder = jf_parts[i + 1 :]
             translated = (
                 str(host_root.joinpath(*remainder)) if remainder else str(host_root)
             )
@@ -53,7 +53,6 @@ def _translate_path(jf_path: str) -> str:
     return jf_path
 
 
-# Human-readable labels for Jellyfin collection types
 _TYPE_LABEL: Dict[str, str] = {
     "movies": "Movies",
     "tvshows": "TV Shows",
