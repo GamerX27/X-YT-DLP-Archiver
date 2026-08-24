@@ -1,6 +1,6 @@
 # YT-DLP Downloader
 
-A self-hosted web downloader powered by **yt-dlp**. Paste a URL, pick a quality, and a rule-based planner selects the right format and sorts files into tidy folders — automatically. No cloud, no API keys, no tracking.
+A self-hosted web downloader powered by **yt-dlp**. Paste a URL, pick a quality, and a rule-based planner selects the right format and sorts files into tidy folders  automatically. No cloud, no API keys, no tracking.
 
 ---
 
@@ -9,10 +9,10 @@ A self-hosted web downloader powered by **yt-dlp**. Paste a URL, pick a quality,
 | | |
 |---|---|
 | **Web UI** | Dark-themed single-page app with real-time progress over WebSocket |
-| **Video downloads** | 720p / 1080p / 1440p / 4K — H.264 preferred at ≤ 1080p, best available above |
+| **Video downloads** | 720p / 1080p / 1440p / 4K  H.264 preferred at ≤ 1080p, best available above |
 | **Audio / YouTube Music** | Detects `music.youtube.com` automatically; downloads best-quality MP3 with cover art, title, artist, and album embedded |
 | **Smart codec selection** | H.264 for ≤ 1080p (no re-encode on most devices); AV1/VP9 for 4K |
-| **Rule-based format planning** | A pure-Python planner picks the format string per URL from resolution/codec rules — no external service or model |
+| **Rule-based format planning** | A pure-Python planner picks the format string per URL from resolution/codec rules  no external service or model |
 | **Auto folder sorting** | Files land in `Channel/`, `Channel/Playlist/`, or `Channel/Videos/` |
 | **Metadata embedding** | MP4/M4A: mutagen MP4 tags. MP3: mutagen ID3 tags (cover art, title, artist, album) |
 | **Playlist archive** | Skips already-downloaded videos across runs using a per-playlist `.yt-dlp-archive` file |
@@ -21,7 +21,7 @@ A self-hosted web downloader powered by **yt-dlp**. Paste a URL, pick a quality,
 | **Network resilience** | Automatically retries up to 10 times on transient network errors (10 s between attempts) |
 | **Jellyfin integration** | Pick a library, browse existing subfolders, and trigger a library scan after each download |
 | **Playlist reordering** | After a Jellyfin TV playlist download, file mtimes are normalised to match playlist order |
-| **Fully self-hosted** | Everything runs in a single container — nothing leaves your network |
+| **Fully self-hosted** | Everything runs in a single container  nothing leaves your network |
 
 ---
 
@@ -95,11 +95,11 @@ All configuration is in `.env`. Copy `.env.example` to get started.
 | `PUID` / `PGID` | `1000` | User/group ID for ownership of downloaded files |
 | `JELLYFIN_URL` | *(optional)* | Full URL of your Jellyfin server, e.g. `http://192.168.1.10:8096` |
 | `JELLYFIN_API_KEY` | *(optional)* | API key from Jellyfin → Admin → API Keys |
-| `JELLYFIN_MEDIA_PATH` | *(optional)* | Host path that covers all Jellyfin libraries — mounted at the same path inside the container |
-| `YOUTUBE_PLAYER_CLIENT` | *(unset — yt-dlp's default client selection)* | Pin yt-dlp to specific YouTube player client(s) for extraction, comma-separated, e.g. `web` or `android,web`. Set this if downloads start failing with `HTTP Error 403: Forbidden` or silently cap at a lower resolution than requested |
+| `JELLYFIN_MEDIA_PATH` | *(optional)* | Host path that covers all Jellyfin libraries  mounted at the same path inside the container |
+| `YOUTUBE_PLAYER_CLIENT` | *(unset  yt-dlp's default client selection)* | Pin yt-dlp to specific YouTube player client(s) for extraction, comma-separated, e.g. `web` or `android,web`. Set this if downloads start failing with `HTTP Error 403: Forbidden` or silently cap at a lower resolution than requested |
 | `YTDLP_BRANCH` | `stable` | `stable` re-checks for a new yt-dlp release weekly; `nightly` checks daily and installs pre-release builds use this at your own risk |
 
-An ad-hoc download always saves straight to your browser as a file — there's no server-side media folder to configure. Leave the three `JELLYFIN_*` variables empty to disable Jellyfin integration; the Jellyfin destination picker and the whole Monitor tab won't appear in the UI, since a monitor has no browser to hand a finished file to and needs a real Jellyfin library to write into.
+An ad-hoc download always saves straight to your browser as a file  there's no server-side media folder to configure. Leave the three `JELLYFIN_*` variables empty to disable Jellyfin integration; the Jellyfin destination picker and the whole Monitor tab won't appear in the UI, since a monitor has no browser to hand a finished file to and needs a real Jellyfin library to write into.
 
 ---
 
@@ -172,4 +172,4 @@ When a Jellyfin library is selected the folder structure follows the library typ
 
 ## Format Planning Rules
 
-All download planning lives in [`webui/format_planner.py`](webui/format_planner.py) — pure Python, no external service or model involved. To change format selection, codec preferences, or folder layout, edit the methods there directly (`_format_from_resolution`, `_folder_from_summary`, `_folder_for_jellyfin`). Changes take effect on container restart.
+All download planning lives in [`webui/format_planner.py`](webui/format_planner.py)  pure Python, no external service or model involved. To change format selection, codec preferences, or folder layout, edit the methods there directly (`_format_from_resolution`, `_folder_from_summary`, `_folder_for_jellyfin`). Changes take effect on container restart.
