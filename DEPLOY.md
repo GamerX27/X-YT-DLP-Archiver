@@ -209,6 +209,32 @@ Then `make restart` (no rebuild needed).
 
 ---
 
+### Downloads complete at a lower resolution than requested
+
+Look for a log line like:
+
+```
+WARNING  downloader — Downloaded below requested quality: got 360p, requested 1080p for '...'
+```
+
+This means yt-dlp's `android` client had no usable URL for anything above 360p for that video — usually YouTube trialing a "SABR-only" streaming experiment against that client, which strips URLs from most formats and leaves only a legacy muxed 360p stream. The app's format selection isn't at fault; there was nothing higher-resolution for it to pick.
+
+Two fixes, same as the 403 case above:
+
+1. **Update yt-dlp** — the container already re-checks for updates on every start/restart, but you can force it immediately:
+   ```bash
+   make update-yt-dlp
+   ```
+2. **Add a fallback player client** in `.env` so a SABR-restricted `android` session falls back to one that still serves full-resolution URLs:
+   ```env
+   YOUTUBE_PLAYER_CLIENT=android,web
+   ```
+   Then `make restart`.
+
+Re-download the affected video(s) after either fix (delete the entry from the destination folder's `.yt-dlp-archive` file, or re-run the playlist download — already-archived items are skipped).
+
+---
+
 ### Downloads fail with `Sign in to confirm you're not a bot`
 
 YouTube's bot detection. Fixes in order of effort:

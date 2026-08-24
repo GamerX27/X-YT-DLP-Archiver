@@ -58,6 +58,19 @@ def _base_extractor_args() -> Dict[str, Any]:
     return {"youtube": {"player_client": _YOUTUBE_PLAYER_CLIENT}}
 
 
+# Maps a resolution_override value to the minimum height we expect. Used to
+# warn when yt-dlp silently settles for less (e.g. YouTube's player-client
+# formats missing URLs during a SABR-only rollout — see
+# https://github.com/yt-dlp/yt-dlp/issues/17456).
+_RESOLUTION_TARGET_HEIGHT = {
+    "720p": 720,
+    "1080p": 1080,
+    "1440p": 1440,
+    "2160p": 2160,
+    "4k": 2160,
+}
+
+
 # YouTube "list" IDs that are dynamically generated mixes/radios. These have
 # no standalone playlist page, so they must NOT be rewritten to /playlist —
 # doing so would make yt-dlp fail to resolve them.
@@ -167,7 +180,14 @@ class _EmbedPP(PostProcessor):
       4. MP4/M4A  → mutagen MP4: cover art, title, artist, album, date, description.
          MP3       → mutagen ID3: APIC cover, TIT2 title, TPE1/TPE2 artist, TALB album.
       5. The standalone thumbnail file is deleted — only the embedded copy remains.
+
+    Also warns (see _check_resolution) when the final file's height falls
+    short of the resolution the user actually requested.
     """
+
+    def __init__(self, downloader=None, target_height: Optional[int] = None):
+        super().__init__(downloader)
+        self._target_height = target_height
 
     def run(self, info: Dict[str, Any]):  # type: ignore[override]
         filepath = info.get("filepath")
@@ -175,6 +195,7 @@ class _EmbedPP(PostProcessor):
             return [], info
 
         path = Path(filepath)
+        self._check_resolution(info, path)
 
         # Convert WebP thumbnail → JPEG (needed for both MP3 and MP4)
         def _prep_thumb() -> Optional[Path]:
@@ -209,6 +230,27 @@ class _EmbedPP(PostProcessor):
             except OSError:
                 pass
         return [], info
+
+    def _check_resolution(self, info: Dict[str, Any], path: Path) -> None:
+        if not self._target_height:
+            return
+        height = info.get("height")
+        if not isinstance(height, (int, float)) or height <= 0:
+            return
+        if height < self._target_height:
+            logger.warning(
+                "Downloaded below requested quality: got %dp, requested %dp for %r — "
+                "YouTube likely withheld higher-resolution URLs for player client(s) "
+                "%s (e.g. a SABR-only rollout, see "
+                "https://github.com/yt-dlp/yt-dlp/issues/17456). Try adding a "
+                "fallback client, e.g. YOUTUBE_PLAYER_CLIENT=%s,web, and/or "
+                "`make update-yt-dlp`.",
+                int(height),
+                self._target_height,
+                path.name,
+                ",".join(_YOUTUBE_PLAYER_CLIENT) or "(none)",
+                _YOUTUBE_PLAYER_CLIENT[0] if _YOUTUBE_PLAYER_CLIENT else "android",
+            )
 
     @staticmethod
     def _find_thumbnail(info: Dict[str, Any], video_path: Path) -> Optional[Path]:
@@ -451,6 +493,7 @@ class Downloader:
         ],
         abort_event: Optional[threading.Event] = None,
         is_audio: bool = False,
+        resolution_override: Optional[str] = None,
     ) -> Path:
         # A watch?v=...&list=... URL only exposes the watch-page playlist panel
         # (capped at ~100 entries). Rewrite it to the full playlist tab so every
@@ -539,18 +582,25 @@ class Downloader:
         if not is_audio:
             opts["merge_output_format"] = "mp4"
 
-        await loop.run_in_executor(None, self._download_sync, url, opts)
+        target_height = (
+            None if is_audio else _RESOLUTION_TARGET_HEIGHT.get(resolution_override or "")
+        )
+        await loop.run_in_executor(
+            None, self._download_sync, url, opts, target_height
+        )
         self._cleanup_temp_format_files(dest)
         return dest
 
     @staticmethod
-    def _download_sync(url: str, opts: Dict[str, Any]) -> None:
+    def _download_sync(
+        url: str, opts: Dict[str, Any], target_height: Optional[int] = None
+    ) -> None:
         def _run(o: Dict[str, Any]) -> None:
             with yt_dlp.YoutubeDL(o) as ydl:
                 # _EmbedPP runs after WriteThumbnailPP and (for audio)
                 # after FFmpegExtractAudio, embedding cover art + tags via
                 # mutagen for both MP4 and MP3 files.
-                ydl.add_post_processor(_EmbedPP(ydl))
+                ydl.add_post_processor(_EmbedPP(ydl, target_height=target_height))
                 ydl.download([url])
 
         def _run_with_retries(o: Dict[str, Any]) -> None:

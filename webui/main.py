@@ -559,6 +559,7 @@ async def process_task(task_id: str) -> None:
             progress_cb=progress_cb,
             abort_event=abort_event,
             is_audio=is_audio,
+            resolution_override=task.get("resolution_override"),
         )
 
         # For playlists with a download archive, keep re-running the download
