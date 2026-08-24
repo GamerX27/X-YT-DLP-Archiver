@@ -12,7 +12,7 @@ A self-hosted web downloader powered by **yt-dlp**. Paste a URL, pick a quality,
 | **Video downloads** | 720p / 1080p / 1440p / 4K  H.264 preferred at ≤ 1080p, best available above |
 | **Audio / YouTube Music** | Detects `music.youtube.com` automatically; downloads best-quality MP3 with cover art, title, artist, and album embedded |
 | **Smart codec selection** | H.264 for ≤ 1080p (no re-encode on most devices); AV1/VP9 for 4K |
-| **Rule-based format planning** | A pure-Python planner picks the format string per URL from resolution/codec rules  no external service or model |
+| **Rule-based format planning** | A pure-Python planner picks the format string per URL from resolution/codec rules |
 | **Auto folder sorting** | Files land in `Channel/`, `Channel/Playlist/`, or `Channel/Videos/` |
 | **Metadata embedding** | MP4/M4A: mutagen MP4 tags. MP3: mutagen ID3 tags (cover art, title, artist, album) |
 | **Playlist archive** | Skips already-downloaded videos across runs using a per-playlist `.yt-dlp-archive` file |
