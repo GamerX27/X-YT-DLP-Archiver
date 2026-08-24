@@ -97,7 +97,7 @@ All configuration is in `.env`. Copy `.env.example` to get started.
 | `JELLYFIN_API_KEY` | *(optional)* | API key from Jellyfin → Admin → API Keys |
 | `JELLYFIN_MEDIA_PATH` | *(optional)* | Host path that covers all Jellyfin libraries — mounted at the same path inside the container |
 | `YOUTUBE_PLAYER_CLIENT` | *(unset — yt-dlp's default client selection)* | Pin yt-dlp to specific YouTube player client(s) for extraction, comma-separated, e.g. `web` or `android,web`. Set this if downloads start failing with `HTTP Error 403: Forbidden` or silently cap at a lower resolution than requested |
-| `YTDLP_BRANCH` | `stable` | `stable` re-checks for a new yt-dlp release weekly; `nightly` checks daily and installs pre-release builds — at your own risk |
+| `YTDLP_BRANCH` | `stable` | `stable` re-checks for a new yt-dlp release weekly; `nightly` checks daily and installs pre-release builds use this at your own risk |
 
 An ad-hoc download always saves straight to your browser as a file — there's no server-side media folder to configure. Leave the three `JELLYFIN_*` variables empty to disable Jellyfin integration; the Jellyfin destination picker and the whole Monitor tab won't appear in the UI, since a monitor has no browser to hand a finished file to and needs a real Jellyfin library to write into.
 
