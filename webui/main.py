@@ -8,7 +8,7 @@ import shutil
 import threading
 import uuid
 from contextlib import asynccontextmanager
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
@@ -21,7 +21,7 @@ from downloader import (
 )
 from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect
 from fastapi.requests import Request
-from fastapi.responses import JSONResponse, RedirectResponse
+from fastapi.responses import FileResponse, JSONResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from format_planner import FormatPlanner
@@ -50,14 +50,23 @@ MAX_CONCURRENT_DOWNLOADS = int(os.getenv("MAX_CONCURRENT_DOWNLOADS", "2"))
 # than this. Long playlists fill it fast, and a full drive otherwise fails
 # mid-download with a cryptic ENOSPC traceback. Configurable via env.
 MIN_FREE_DISK_MB = int(os.getenv("MIN_FREE_DISK_MB", "2000"))
-MEDIA_DIR = os.getenv(
-    "MEDIA_DIR", "/media"
-)  # matches the volume mount in docker-compose
+# How long a finished "browser download" (file staged for the user to save)
+# is kept on the download cache drive before it's swept away automatically,
+# in case the user never comes back to click "Save to device".
+BROWSER_DOWNLOAD_TTL_HOURS = int(os.getenv("BROWSER_DOWNLOAD_TTL_HOURS", "12"))
 
 # Statuses that mean a task still owns its playlist/URL — used to prevent
 # enqueuing a duplicate download while one is already in flight.
 ACTIVE_STATUSES = frozenset(
-    {"pending", "probing", "analyzing", "downloading", "moving", "ordering"}
+    {
+        "pending",
+        "probing",
+        "analyzing",
+        "downloading",
+        "moving",
+        "ordering",
+        "finalizing",
+    }
 )
 
 tasks: Dict[str, Dict[str, Any]] = {}
@@ -124,7 +133,9 @@ def _archive_count(monitor: Dict[str, Any]) -> int:
     Count how many video IDs are in the download archive for this monitor.
     Returns 0 if the archive doesn't exist yet.
     """
-    dest_base = monitor.get("jellyfin_library_path") or MEDIA_DIR
+    dest_base = monitor.get("jellyfin_library_path")
+    if not dest_base:
+        return 0
 
     # Use the stored folder_path if available (set after first download).
     # Fall back to an estimate using channel + playlist name.
@@ -246,6 +257,36 @@ async def monitor_scheduler() -> None:
                 monitor_store.mark_ran(monitor["id"])
         except Exception as exc:
             logger.exception("Monitor scheduler error: %s", exc)
+
+
+async def cleanup_scheduler() -> None:
+    """Background loop — expires "browser download" files nobody came back
+    for, so the download cache drive doesn't fill up with abandoned files."""
+    while True:
+        await asyncio.sleep(3600)
+        try:
+            now = datetime.now()
+            for task_id, task in list(tasks.items()):
+                if not task.get("browser_ready"):
+                    continue
+                completed_at = task.get("_completed_at")
+                if not completed_at:
+                    continue
+                try:
+                    completed_dt = datetime.fromisoformat(completed_at)
+                except ValueError:
+                    continue
+                if now - completed_dt > timedelta(hours=BROWSER_DOWNLOAD_TTL_HOURS):
+                    shutil.rmtree(DOWNLOADS_DIR / task_id, ignore_errors=True)
+                    tasks.pop(task_id, None)
+                    await broadcast({"type": "task_removed", "task_id": task_id})
+                    logger.info(
+                        "Expired unclaimed browser download %s after %dh",
+                        task_id,
+                        BROWSER_DOWNLOAD_TTL_HOURS,
+                    )
+        except Exception:
+            logger.exception("Cleanup scheduler error")
 
 
 async def reorder_jellyfin_playlist(dest: Path, planner) -> None:
@@ -412,6 +453,41 @@ async def _download_with_resume(
     return last_dir
 
 
+async def _prepare_browser_download(task_dir: Path, folder_path: str) -> tuple:
+    """Package a finished ad-hoc download for the browser to fetch.
+
+    A single video/audio file is left as-is; a playlist (multiple files) is
+    zipped as a whole so the user can save it in one click. Returns
+    ``(file_path, filename)``.
+    """
+    safe_folder = "/".join(
+        sanitize_path(p) for p in folder_path.split("/") if p.strip()
+    )
+    src_dir = task_dir / safe_folder if safe_folder else task_dir
+    if not src_dir.is_dir():
+        raise RuntimeError("Downloaded file could not be located")
+
+    files = [f for f in src_dir.rglob("*") if f.is_file() and not f.name.startswith(".")]
+    if not files:
+        raise RuntimeError("Downloaded file could not be located")
+
+    if len(files) == 1:
+        return files[0], files[0].name
+
+    zip_stem = sanitize_path(safe_folder.rstrip("/").split("/")[-1] or "playlist")
+    base_name = str(task_dir / zip_stem)
+    loop = asyncio.get_event_loop()
+    zip_path_str = await loop.run_in_executor(
+        None,
+        lambda: shutil.make_archive(
+            base_name, "zip", root_dir=str(src_dir.parent), base_dir=src_dir.name
+        ),
+    )
+    zip_path = Path(zip_path_str)
+    shutil.rmtree(src_dir, ignore_errors=True)
+    return zip_path, zip_path.name
+
+
 async def process_task(task_id: str) -> None:
     task = tasks.get(task_id)
     if task is None:
@@ -479,29 +555,43 @@ async def process_task(task_id: str) -> None:
         # arrived — permanently skipping those episodes on the next run. So
         # during the download we use a *staging* archive seeded from the
         # persistent one, and commit it only on success (see after the move).
+        # A download only gets a persistent server-side destination (and thus a
+        # persistent cross-run archive) when it's writing into a Jellyfin
+        # library. An ad-hoc download with none selected streams straight to
+        # the user's browser instead — there is nothing on disk to seed an
+        # archive from, and nothing worth keeping around after the user saves
+        # the file. Monitors always have a Jellyfin destination (the Monitor
+        # tab is unusable without Jellyfin configured — see below).
+        browser_download = not task.get("jellyfin_library_path") and not task.get(
+            "monitor_id"
+        )
+
+        if task.get("monitor_id") and not task.get("jellyfin_library_path"):
+            msg = "This monitor has no Jellyfin destination configured."
+            update_task(task_id, status="failed", status_text=msg, error=msg)
+            return
+
         dest_archive: Optional[Path] = None
         staging_archive: Optional[Path] = None
         if plan.get("content_type") == "playlist":
-            jf_path_for_archive = task.get("jellyfin_library_path")
-            archive_base = Path(
-                jf_path_for_archive if jf_path_for_archive else MEDIA_DIR
-            )
-            dest_archive = (
-                archive_base / plan.get("folder_path", "") / ".yt-dlp-archive"
-            )
             staging_archive = DOWNLOADS_DIR / task_id / ".yt-dlp-archive"
             try:
                 staging_archive.parent.mkdir(parents=True, exist_ok=True)
-                # Seed the staging archive with everything already in the
-                # destination so we don't re-download completed episodes.
-                if dest_archive.exists():
-                    shutil.copyfile(dest_archive, staging_archive)
+                if not browser_download:
+                    archive_base = Path(task["jellyfin_library_path"])
+                    dest_archive = (
+                        archive_base / plan.get("folder_path", "") / ".yt-dlp-archive"
+                    )
+                    # Seed the staging archive with everything already in the
+                    # destination so we don't re-download completed episodes.
+                    if dest_archive.exists():
+                        shutil.copyfile(dest_archive, staging_archive)
+                    logger.info(
+                        "Playlist archive: staging=%s commits to %s after move",
+                        staging_archive,
+                        dest_archive,
+                    )
                 plan["extra_opts"]["download_archive"] = str(staging_archive)
-                logger.info(
-                    "Playlist archive: staging=%s commits to %s after move",
-                    staging_archive,
-                    dest_archive,
-                )
             except Exception as exc:
                 logger.warning("Could not set up download archive (non-fatal): %s", exc)
 
@@ -584,13 +674,41 @@ async def process_task(task_id: str) -> None:
 
         if _cancelled():
             return
-        jellyfin_path = task.get("jellyfin_library_path")
-        dest_dir = jellyfin_path if jellyfin_path else MEDIA_DIR
+
+        if browser_download:
+            # No Jellyfin library configured for this download — stage the
+            # finished file(s) in place and let the user pull it down through
+            # the browser instead of writing it to the server.
+            update_task(
+                task_id,
+                status="finalizing",
+                status_text="Preparing file…",
+                progress=100,
+            )
+            file_path, download_filename = await _prepare_browser_download(
+                task_dir, plan.get("folder_path", "Downloads")
+            )
+            logger.info("Task %s ready for browser download: %s", task_id, file_path)
+            update_task(
+                task_id,
+                status="completed",
+                status_text="Ready for download",
+                final_path=None,
+                browser_ready=True,
+                download_filename=download_filename,
+                progress=100,
+                _completed_at=datetime.now().isoformat(),
+            )
+            return
+
+        # Guaranteed set here: browser_download (no Jellyfin, no monitor) and
+        # monitor-without-Jellyfin both returned above.
+        dest_dir = task["jellyfin_library_path"]
 
         update_task(
             task_id,
             status="moving",
-            status_text=f"Moving to {'Jellyfin' if jellyfin_path else 'media'} folder…",
+            status_text="Moving to Jellyfin folder…",
             progress=100,
         )
 
@@ -704,6 +822,7 @@ async def lifespan(app: FastAPI):
         t = asyncio.create_task(worker())
         worker_tasks.append(t)
     worker_tasks.append(asyncio.create_task(monitor_scheduler()))
+    worker_tasks.append(asyncio.create_task(cleanup_scheduler()))
     yield
     for t in worker_tasks:
         t.cancel()
@@ -768,6 +887,11 @@ async def api_probe(body: ProbeRequest):
     is_playlist = metadata.get("_type") == "playlist"
     title = metadata.get("title", "")
     channel = metadata.get("channel") or metadata.get("uploader", "")
+    thumbnail = metadata.get("thumbnail")
+    if not thumbnail:
+        thumbs = metadata.get("thumbnails") or []
+        if thumbs:
+            thumbnail = thumbs[-1].get("url")
 
     if is_music:
         # Music URLs: audio-only mode, no resolution selection needed
@@ -777,6 +901,7 @@ async def api_probe(body: ProbeRequest):
             "is_playlist": is_playlist,
             "available": [],
             "is_audio": True,
+            "thumbnail": thumbnail,
         }
 
     if is_playlist:
@@ -811,6 +936,7 @@ async def api_probe(body: ProbeRequest):
         "is_playlist": is_playlist,
         "available": available,
         "is_audio": False,
+        "thumbnail": thumbnail,
     }
 
 
@@ -879,9 +1005,8 @@ async def api_download(body: DownloadRequest):
         )
 
     # If this playlist is already watched by a monitor, route the download to
-    # the monitor's destination so the same playlist can't diverge into two
-    # folders/archives (one under the Jellyfin library, one under MEDIA_DIR).
-    # The user's explicit choices in the form still take precedence.
+    # the monitor's Jellyfin destination so the same playlist can't diverge
+    # into two folders/archives. The user's explicit form choices still win.
     monitor = _monitor_for_url(body.url)
     is_music_link = "music.youtube.com" in body.url
     if monitor is None and is_music_link and not body.jellyfin_library_id:
@@ -941,6 +1066,10 @@ async def api_download(body: DownloadRequest):
         "jellyfin_library_type": body.jellyfin_library_type,
         "folder_override": body.folder_override,
         "include_playlist_index": body.include_playlist_index,
+        # Tag with the matching monitor (if any) so it routes to the same
+        # destination/archive and its progress shows on that monitor's card
+        # instead of cluttering the main downloads list.
+        "monitor_id": monitor["id"] if monitor is not None else None,
         "error": None,
     }
     tasks[task_id] = task
@@ -954,11 +1083,38 @@ async def api_tasks():
     return list(tasks.values())
 
 
+@app.get("/api/tasks/{task_id}/file")
+async def api_download_task_file(task_id: str):
+    """Serve a finished ad-hoc download's file for the browser to save."""
+    task = tasks.get(task_id)
+    if not task or not task.get("browser_ready"):
+        raise HTTPException(status_code=404, detail="File not available")
+    filename = task.get("download_filename")
+    if not filename:
+        raise HTTPException(status_code=404, detail="File not available")
+
+    task_dir = DOWNLOADS_DIR / task_id
+    match: Optional[Path] = None
+    if task_dir.is_dir():
+        for f in task_dir.rglob(filename):
+            if f.is_file():
+                match = f
+                break
+    if not match:
+        raise HTTPException(
+            status_code=404, detail="File no longer available — it may have expired"
+        )
+
+    media_type = "application/zip" if match.suffix.lower() == ".zip" else "application/octet-stream"
+    return FileResponse(path=str(match), filename=filename, media_type=media_type)
+
+
 class MonitorRequest(BaseModel):
     url: str
     name: Optional[str] = None
     schedule: str = "daily"
     schedule_time: str = "03:00"
+    schedule_day: Optional[int] = None  # 0=Monday…6=Sunday, used when schedule="weekly"
     resolution_override: Optional[str] = "1080p"
     jellyfin_library_id: Optional[str] = None
     jellyfin_library_name: Optional[str] = None
@@ -976,6 +1132,12 @@ async def api_monitors():
 
 @app.post("/api/monitors")
 async def api_add_monitor(body: MonitorRequest):
+    # Monitors run unattended on a schedule — there's no browser to hand a
+    # finished file to, so they need a real, persistent Jellyfin destination.
+    if not body.jellyfin_library_id:
+        raise HTTPException(
+            status_code=400, detail="A Jellyfin library is required to create a monitor"
+        )
     name = body.name
     channel = None
     if not name:
@@ -992,6 +1154,7 @@ async def api_add_monitor(body: MonitorRequest):
             "channel": channel,
             "schedule": body.schedule,
             "schedule_time": body.schedule_time,
+            "schedule_day": body.schedule_day,
             "resolution_override": body.resolution_override,
             "jellyfin_library_id": body.jellyfin_library_id,
             "jellyfin_library_name": body.jellyfin_library_name,
@@ -1027,6 +1190,10 @@ async def api_run_monitor_now(monitor_id: str):
 
 @app.patch("/api/monitors/{monitor_id}")
 async def api_update_monitor(monitor_id: str, body: dict):
+    if "jellyfin_library_id" in body and not body["jellyfin_library_id"]:
+        raise HTTPException(
+            status_code=400, detail="A Jellyfin library is required for monitors"
+        )
     monitor = monitor_store.update(monitor_id, **body)
     if not monitor:
         raise HTTPException(status_code=404, detail="Monitor not found")
@@ -1050,7 +1217,11 @@ async def api_cancel_task(task_id: str):
 async def api_delete_task(task_id: str):
     if task_id not in tasks:
         raise HTTPException(status_code=404, detail="Task not found")
-    del tasks[task_id]
+    task = tasks.pop(task_id)
+    if task.get("browser_ready"):
+        # This task's file lives only in the download cache, not a library —
+        # clean it up now instead of waiting for the TTL sweep.
+        shutil.rmtree(DOWNLOADS_DIR / task_id, ignore_errors=True)
     await broadcast({"type": "task_removed", "task_id": task_id})
     return {"deleted": task_id}
 

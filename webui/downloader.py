@@ -48,7 +48,7 @@ _PUID = int(os.getenv("PUID", "1000"))
 _PGID = int(os.getenv("PGID", "1000"))
 
 _YOUTUBE_PLAYER_CLIENT = [
-    c.strip() for c in os.getenv("YOUTUBE_PLAYER_CLIENT", "android").split(",") if c.strip()
+    c.strip() for c in os.getenv("YOUTUBE_PLAYER_CLIENT", "").split(",") if c.strip()
 ]
 
 
@@ -238,18 +238,21 @@ class _EmbedPP(PostProcessor):
         if not isinstance(height, (int, float)) or height <= 0:
             return
         if height < self._target_height:
+            client_note = (
+                f" for player client(s) {','.join(_YOUTUBE_PLAYER_CLIENT)}"
+                if _YOUTUBE_PLAYER_CLIENT
+                else " (using yt-dlp's default client selection)"
+            )
             logger.warning(
                 "Downloaded below requested quality: got %dp, requested %dp for %r — "
-                "YouTube likely withheld higher-resolution URLs for player client(s) "
-                "%s (e.g. a SABR-only rollout, see "
-                "https://github.com/yt-dlp/yt-dlp/issues/17456). Try adding a "
-                "fallback client, e.g. YOUTUBE_PLAYER_CLIENT=%s,web, and/or "
-                "`make update-yt-dlp`.",
+                "YouTube likely withheld higher-resolution URLs%s (e.g. a SABR-only "
+                "rollout, see https://github.com/yt-dlp/yt-dlp/issues/17456). Try "
+                "setting YOUTUBE_PLAYER_CLIENT to a specific client (e.g. "
+                "YOUTUBE_PLAYER_CLIENT=web) and/or `make update-yt-dlp`.",
                 int(height),
                 self._target_height,
                 path.name,
-                ",".join(_YOUTUBE_PLAYER_CLIENT) or "(none)",
-                _YOUTUBE_PLAYER_CLIENT[0] if _YOUTUBE_PLAYER_CLIENT else "android",
+                client_note,
             )
 
     @staticmethod
@@ -459,7 +462,7 @@ class Downloader:
         # Use the full playlist tab instead of a capped watch-page panel so the
         # reported playlist_count matches what will actually be downloaded.
         url = normalize_playlist_url(url)
-        opts = {
+        flat_opts = {
             "quiet": True,
             "no_warnings": True,
             "extract_flat": True,
@@ -468,7 +471,29 @@ class Downloader:
             "extractor_args": _base_extractor_args(),
         }
         loop = asyncio.get_event_loop()
-        info = await loop.run_in_executor(None, self._probe_sync, url, opts)
+        info = await loop.run_in_executor(None, self._probe_sync, url, flat_opts)
+        if not info:
+            return {}
+
+        # extract_flat also flattens the target item itself, so a single video
+        # probe never carried real `formats`/`thumbnail` data — the quality
+        # picker's "no formats found" fallback always capped it at 720p
+        # regardless of the video's actual max resolution. Re-probe without
+        # flattening for single videos only; playlists stay on the fast flat
+        # path since only their entry count is needed here.
+        if info.get("_type") != "playlist":
+            full_opts = {
+                "quiet": True,
+                "no_warnings": True,
+                "skip_download": True,
+                "extractor_args": _base_extractor_args(),
+            }
+            full_info = await loop.run_in_executor(
+                None, self._probe_sync, url, full_opts
+            )
+            if full_info:
+                info = full_info
+
         return sanitize_info(info) if info else {}
 
     @staticmethod

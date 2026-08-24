@@ -7,7 +7,18 @@ const ACTIVE_STATUSES = [
   "downloading",
   "moving",
   "ordering",
+  "finalizing",
   "cancelling",
+];
+
+const DAY_NAMES = [
+  "Monday",
+  "Tuesday",
+  "Wednesday",
+  "Thursday",
+  "Friday",
+  "Saturday",
+  "Sunday",
 ];
 const COMPLETED_STATUSES = ["completed", "failed", "cancelled"];
 const ALL_STATUS_CLASSES = [...ACTIVE_STATUSES, ...COMPLETED_STATUSES];
@@ -33,6 +44,12 @@ let folderBrowserBase = ""; // root path of selected library
 let folderBrowserCurrent = ""; // current path being browsed (absolute)
 let selectedFolderOverride = null; // relative path the user picked (e.g. "Mixes")
 let defaultMusicFolder = null; // { jellyfin_library_id, jellyfin_library_name, jellyfin_library_path, jellyfin_library_type, folder_override } or null
+let lastProbe = null; // { title, channel, is_playlist, thumbnail } from the most recent successful /api/probe
+let autoDownloaded = new Set(); // task ids already handed to the browser via the auto-save flow
+let editingMonitorId = null; // monitor id currently loaded into the Add Monitor form for editing, or null
+let monitorScheduleEl = null;
+let monitorTimeEl = null;
+let monitorDayEl = null;
 
 // ── DOM helpers ───────────────────────────────────────────────────────────────
 
@@ -64,9 +81,10 @@ const els = {
   resBtn1080: () => $("res-btn-1080p"),
   resBtn1440: () => $("res-btn-1440p"),
   resBtn2160: () => $("res-btn-2160p"),
+  resBtnAudio: () => $("res-btn-audio"),
   // probe info strip
   probeInfo: () => $("probe-info"),
-  probeTypeIcon: () => $("probe-type-icon"),
+  probeThumb: () => $("probe-thumb"),
   probeTitle: () => $("probe-title"),
   probeChannel: () => $("probe-channel"),
   probeBadge: () => $("probe-badge"),
@@ -102,6 +120,9 @@ const updateCounts = () => {
   let active = 0,
     completed = 0;
   for (const t of tasks.values()) {
+    // Monitor-triggered downloads show their progress on the Monitor tab's
+    // card instead — they don't count toward the Downloads tab's lists.
+    if (t.monitor_id) continue;
     if (ACTIVE_STATUSES.includes(t.status)) active++;
     else if (COMPLETED_STATUSES.includes(t.status)) completed++;
   }
@@ -128,17 +149,27 @@ const showToast = (msg, type = "info") => {
 
 // ── Probe info strip ──────────────────────────────────────────────────────────
 
-const showProbeInfo = (title, channel, isPlaylist, typeOverride = null) => {
+const showProbeInfo = (
+  title,
+  channel,
+  isPlaylist,
+  thumbnail = null,
+  typeOverride = null,
+) => {
   if (!title && !channel) {
     hideProbeInfo();
     return;
   }
 
-  els.probeTypeIcon().textContent = isPlaylist
-    ? "📋"
-    : typeOverride === "audio"
-      ? "♪"
-      : "▶";
+  const thumbEl = els.probeThumb();
+  if (thumbnail) {
+    thumbEl.src = thumbnail;
+    thumbEl.hidden = false;
+  } else {
+    thumbEl.hidden = true;
+    thumbEl.removeAttribute("src");
+  }
+
   els.probeTitle().textContent = title || "";
   els.probeChannel().textContent = channel || "";
 
@@ -161,6 +192,8 @@ const showProbeInfo = (title, channel, isPlaylist, typeOverride = null) => {
 
 const hideProbeInfo = () => {
   els.probeInfo().hidden = true;
+  els.probeThumb().hidden = true;
+  els.probeThumb().removeAttribute("src");
   const indexArea = els.playlistIndexArea();
   if (indexArea) indexArea.hidden = true;
 };
@@ -205,7 +238,7 @@ const renderFolderBrowser = async (path) => {
       btn.type = "button";
       btn.className =
         "folder-btn" + (selectedFolderOverride === relPath ? " selected" : "");
-      btn.innerHTML = `<span class="folder-icon">📁</span><span class="folder-name">${name}</span>`;
+      btn.innerHTML = `<span class="folder-name">${name}</span>`;
       btn.addEventListener("click", () =>
         selectFolderOverride(absPath, relPath, name),
       );
@@ -267,7 +300,7 @@ const updateSetDefaultButton = () => {
   const btn = els.folderBrowserDefault();
   if (!btn) return;
   const isDefault = isCurrentDefaultMusicFolder();
-  btn.textContent = isDefault ? "★ Default for Music links" : "☆ Set as default";
+  btn.textContent = isDefault ? "Default for Music links" : "Set as default";
   btn.classList.toggle("is-default", isDefault);
 };
 
@@ -421,6 +454,10 @@ const initJellyfin = async () => {
       // Show Jellyfin section on Monitor tab too
       const mja = document.getElementById("monitor-jellyfin-area");
       if (mja) mja.hidden = false;
+      // Monitors run unattended and always need a Jellyfin destination —
+      // without Jellyfin configured, the whole tab has nothing usable in it.
+      const monitorTabBtn = document.getElementById("monitor-tab-btn");
+      if (monitorTabBtn) monitorTabBtn.hidden = false;
       // Pre-fetch libraries so first open is instant
       await fetchJellyfinLibraries();
     }
@@ -452,6 +489,7 @@ const allResBtns = () =>
     els.resBtn1080(),
     els.resBtn1440(),
     els.resBtn2160(),
+    els.resBtnAudio(),
   ].filter(Boolean);
 
 const clearResSelection = () => {
@@ -462,13 +500,17 @@ const clearResSelection = () => {
   musicModeActive = false;
 };
 
-// Select a specific resolution button programmatically
+// Select a specific resolution button programmatically. Also handles the
+// "Audio only" button, which lives alongside the quality buttons (rather
+// than switching to the separate audio-mode UI reserved for music.youtube.com
+// links) so a plain video link can be downloaded as audio in one click.
 const selectResolution = (res) => {
   const map = {
     "720p": els.resBtn720(),
     "1080p": els.resBtn1080(),
     "1440p": els.resBtn1440(),
     "2160p": els.resBtn2160(),
+    audio: els.resBtnAudio(),
   };
   allResBtns().forEach((btn) => btn.classList.remove("active"));
   const btn = map[res];
@@ -477,34 +519,48 @@ const selectResolution = (res) => {
     selectedRes = res;
     els.hiddenRes().value = res;
     els.submitBtn().disabled = false;
+    musicModeActive = res === "audio";
+    renderJellyfinLibraries(); // re-render with/without the music-only filter
+    if (lastProbe) {
+      showProbeInfo(
+        lastProbe.title,
+        lastProbe.channel,
+        lastProbe.is_playlist,
+        lastProbe.thumbnail,
+        res === "audio" ? "audio" : null,
+      );
+    }
   }
 };
 
-const applyProbeResult = ({ available, title, channel, is_playlist }) => {
+const applyProbeResult = ({ available, title, channel, is_playlist, thumbnail }) => {
   // Show/hide buttons based on what the video actually has
   els.resBtn720().hidden = !available.includes("720p");
   els.resBtn1080().hidden = !available.includes("1080p");
   els.resBtn1440().hidden = !available.includes("1440p");
   els.resBtn2160().hidden = !available.includes("2160p");
+  els.resBtnAudio().hidden = false; // audio extraction works regardless of video formats
 
   clearResSelection();
   setResState("buttons");
+  lastProbe = { title, channel, is_playlist, thumbnail };
 
   // Auto-select the highest available quality
   const best = RES_PRIORITY.find((r) => available.includes(r));
   if (best) selectResolution(best);
 
-  showProbeInfo(title, channel, is_playlist);
+  showProbeInfo(title, channel, is_playlist, thumbnail);
 };
 
-const applyAudioMode = ({ title, channel, is_playlist }) => {
+const applyAudioMode = ({ title, channel, is_playlist, thumbnail }) => {
   setResState("audio");
   selectedRes = "audio";
   els.hiddenRes().value = "audio";
   els.submitBtn().disabled = false;
   musicModeActive = true;
+  lastProbe = { title, channel, is_playlist, thumbnail };
   renderJellyfinLibraries(); // re-render with music filter
-  showProbeInfo(title, channel, is_playlist, "audio");
+  showProbeInfo(title, channel, is_playlist, thumbnail, "audio");
 
   // Auto-expand Jellyfin and select a destination so downloading needs no
   // extra clicks: prefer the user's saved default music folder, falling
@@ -527,6 +583,7 @@ const probeUrl = async (url) => {
   clearResSelection();
   hideProbeInfo();
   setResState("probing");
+  lastProbe = null;
 
   try {
     const resp = await fetch("/api/probe", {
@@ -624,9 +681,13 @@ const renderTask = (task, container) => {
 
   const statusText = card.querySelector(".task-status-text");
   if (task.status === "failed") {
-    statusText.textContent = `⚠ ${task.status_text || "Download failed"}`;
+    statusText.textContent = task.status_text || "Download failed";
+  } else if (task.status === "completed" && task.browser_ready) {
+    statusText.textContent = autoDownloaded.has(task.id)
+      ? "Sent to your device"
+      : "Sending to your device…";
   } else if (task.status === "completed") {
-    statusText.textContent = `✓ ${task.final_path || task.status_text || "Done"}`;
+    statusText.textContent = task.final_path || task.status_text || "Done";
   } else {
     statusText.textContent = task.status_text || "";
   }
@@ -664,11 +725,41 @@ const renderTask = (task, container) => {
 
 // ── Task routing ──────────────────────────────────────────────────────────────
 
+// A download with no Jellyfin destination is staged in the container instead
+// of written to server disk — as soon as it's ready, hand it straight to the
+// browser's own download flow rather than making the user click a button.
+const autoSaveToDevice = (task) => {
+  if (autoDownloaded.has(task.id)) return;
+  autoDownloaded.add(task.id);
+  const a = document.createElement("a");
+  a.href = `/api/tasks/${task.id}/file`;
+  a.download = task.download_filename || "";
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+};
+
 const updateTask = (task) => {
   tasks.set(task.id, task);
 
+  if (task.status === "completed" && task.browser_ready) {
+    autoSaveToDevice(task);
+  }
+
   const activeList = els.activeList();
   const completedList = els.completedList();
+
+  // Monitor-triggered downloads (including ad-hoc downloads that matched an
+  // existing monitor) get their progress shown on that monitor's card on the
+  // Monitor tab instead — keep them off the Downloads tab's lists entirely,
+  // active or completed.
+  if (task.monitor_id) {
+    activeList.querySelector(`[data-id="${task.id}"]`)?.remove();
+    completedList.querySelector(`[data-id="${task.id}"]`)?.remove();
+    updateCounts();
+    return;
+  }
+
   const isCompleted = COMPLETED_STATUSES.includes(task.status);
 
   if (isCompleted) {
@@ -714,6 +805,7 @@ const connectWs = () => {
     switch (msg.type) {
       case "init":
         tasks.clear();
+        monitorTasks.clear();
         els
           .activeList()
           .querySelectorAll(".task-card")
@@ -722,7 +814,13 @@ const connectWs = () => {
           .completedList()
           .querySelectorAll(".task-card")
           .forEach((el) => el.remove());
-        (msg.tasks || []).forEach((t) => updateTask(t));
+        (msg.tasks || []).forEach((t) => {
+          updateTask(t);
+          if (t.monitor_id && ACTIVE_STATUSES.includes(t.status)) {
+            monitorTasks.set(t.monitor_id, t);
+          }
+        });
+        renderMonitors();
         break;
       case "task_added":
       case "task_update":
@@ -759,7 +857,7 @@ const renderDiskWarning = (data) => {
     );
     const min = Math.round(((data.disk_min_mb || 0) / 1024) * 10) / 10;
     el.textContent =
-      `⚠ Low disk space — only ${free} GB free on the download cache drive ` +
+      `Low disk space — only ${free} GB free on the download cache drive ` +
       `(minimum ${min} GB). New downloads will be refused until space is freed.`;
     el.hidden = false;
   } else {
@@ -923,8 +1021,8 @@ const handleRemoveClick = async (e) => {
 // ── Clear completed ───────────────────────────────────────────────────────────
 
 const handleClearCompleted = async () => {
-  const toDelete = [...tasks.values()].filter((t) =>
-    COMPLETED_STATUSES.includes(t.status),
+  const toDelete = [...tasks.values()].filter(
+    (t) => !t.monitor_id && COMPLETED_STATUSES.includes(t.status),
   );
   await Promise.allSettled(
     toDelete.map((t) => fetch(`/api/tasks/${t.id}`, { method: "DELETE" })),
@@ -958,7 +1056,14 @@ const scheduleLabel = (m) => {
   if (s === "hourly") return "Every hour";
   if (s === "6h") return "Every 6 hours";
   if (s === "12h") return "Every 12 hours";
-  if (s === "weekly") return "Weekly";
+  if (s === "weekly") {
+    const [h, min] = (m.schedule_time || "03:00").split(":").map(Number);
+    const d = new Date();
+    d.setHours(h, min, 0, 0);
+    const t = d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+    const dayName = m.schedule_day != null ? DAY_NAMES[m.schedule_day] : null;
+    return dayName ? `Weekly on ${dayName} at ${t}` : "Weekly";
+  }
   return s;
 };
 
@@ -1003,14 +1108,14 @@ const renderMonitors = () => {
     const statusLabel = isDownloading
       ? "downloading"
       : m.status === "up-to-date"
-        ? "✓ up to date"
+        ? "up to date"
         : m.status === "checking"
           ? "checking…"
           : m.status || "idle";
     const jfBadge = m.jellyfin_library_id
       ? `<span class="monitor-jf-badge"><img src="/static/img/jellyfin.svg" class="jellyfin-icon jellyfin-icon--sm" alt=""/> ${m.jellyfin_library_name || m.jellyfin_library_type || "Jellyfin"}</span>`
       : "";
-    const numberingBadge = `<span class="monitor-numbering">${m.include_playlist_index ? "✓ Numbering" : "✗ No numbering"}</span>`;
+    const numberingBadge = `<span class="monitor-numbering">${m.include_playlist_index ? "Numbering on" : "Numbering off"}</span>`;
     const archiveInfo =
       m.archive_count != null || m.playlist_count != null
         ? `<span class="monitor-archive">${m.archive_count ?? 0} / ${m.playlist_count ?? "?"} downloaded</span>`
@@ -1036,6 +1141,8 @@ const renderMonitors = () => {
         })()
       : "";
 
+    card.classList.toggle("editing", editingMonitorId === m.id);
+
     card.innerHTML = `
       <div class="monitor-header">
         <div class="monitor-meta">
@@ -1044,14 +1151,15 @@ const renderMonitors = () => {
         </div>
         <div class="monitor-actions">
           <span class="task-status-badge ${statusClass}">${statusLabel}</span>
-          <button class="btn-monitor-run" data-id="${m.id}" title="Check now">▶</button>
-          <button class="btn-remove" data-id="${m.id}" title="Remove">✕</button>
+          <button class="btn-monitor-run" data-id="${m.id}" title="Check now">Check now</button>
+          <button class="btn-monitor-edit" data-id="${m.id}" title="Edit">Edit</button>
+          <button class="btn-remove" data-id="${m.id}" title="Remove">Remove</button>
         </div>
       </div>
       <div class="monitor-url">${m.url}</div>
       ${progressSection}
       <div class="monitor-footer">
-        <span class="monitor-schedule">⏱ ${scheduleLabel(m)}</span>
+        <span class="monitor-schedule">${scheduleLabel(m)}</span>
         <span class="monitor-res">${m.resolution_override || "1080p"}</span>
         ${numberingBadge}
         ${archiveInfo}
@@ -1086,56 +1194,162 @@ const renderMonitorJellyfinLibraries = () => {
   });
 };
 
+const syncMonitorScheduleFieldsVisibility = () => {
+  const val = monitorScheduleEl?.value;
+  if (monitorTimeEl) monitorTimeEl.hidden = !(val === "daily" || val === "weekly");
+  if (monitorDayEl) monitorDayEl.hidden = val !== "weekly";
+};
+
+// Load an existing monitor into the Add Monitor form for editing. The URL is
+// locked (it identifies which playlist/archive this monitor owns) — every
+// other field can be changed and is saved via PATCH instead of POST.
+const startEditMonitor = (m) => {
+  editingMonitorId = m.id;
+
+  const urlInput = document.getElementById("monitor-url");
+  if (urlInput) {
+    urlInput.value = m.url || "";
+    urlInput.disabled = true;
+  }
+  if (monitorScheduleEl) monitorScheduleEl.value = m.schedule || "daily";
+  if (monitorTimeEl) monitorTimeEl.value = m.schedule_time || "03:00";
+  if (monitorDayEl) {
+    monitorDayEl.value = m.schedule_day != null ? String(m.schedule_day) : "0";
+  }
+  syncMonitorScheduleFieldsVisibility();
+
+  const resSelect = document.getElementById("monitor-res");
+  if (resSelect) resSelect.value = m.resolution_override || "1080p";
+  if (els.monitorPlaylistIndexCheckbox()) {
+    els.monitorPlaylistIndexCheckbox().checked = m.include_playlist_index !== false;
+  }
+
+  selectedMonitorJfLibrary = m.jellyfin_library_id
+    ? {
+        id: m.jellyfin_library_id,
+        name: m.jellyfin_library_name,
+        path: m.jellyfin_library_path,
+        type: m.jellyfin_library_type,
+      }
+    : null;
+  const btnText = document.getElementById("monitor-jellyfin-btn-text");
+  if (btnText) {
+    btnText.textContent = selectedMonitorJfLibrary
+      ? selectedMonitorJfLibrary.name
+      : "Save to Jellyfin";
+  }
+  renderMonitorJellyfinLibraries();
+
+  const submitBtn = document.getElementById("monitor-submit-btn");
+  if (submitBtn) submitBtn.textContent = "Save changes";
+  const cancelBtn = document.getElementById("monitor-cancel-edit-btn");
+  if (cancelBtn) cancelBtn.hidden = false;
+  const formTitle = document.getElementById("monitor-form-title");
+  if (formTitle) formTitle.textContent = "Edit Monitor";
+  const formCard = document.getElementById("monitor-form-card");
+  if (formCard) formCard.classList.add("editing");
+
+  renderMonitors(); // highlight this monitor's card as the one being edited
+  urlInput?.scrollIntoView({ behavior: "smooth", block: "center" });
+};
+
+const cancelEditMonitor = () => {
+  editingMonitorId = null;
+
+  const urlInput = document.getElementById("monitor-url");
+  if (urlInput) {
+    urlInput.value = "";
+    urlInput.disabled = false;
+  }
+  if (monitorScheduleEl) monitorScheduleEl.value = "daily";
+  syncMonitorScheduleFieldsVisibility();
+
+  selectedMonitorJfLibrary = null;
+  const btnText = document.getElementById("monitor-jellyfin-btn-text");
+  if (btnText) btnText.textContent = "Save to Jellyfin";
+  renderMonitorJellyfinLibraries();
+
+  const submitBtn = document.getElementById("monitor-submit-btn");
+  if (submitBtn) submitBtn.textContent = "+ Add Monitor";
+  const cancelBtn = document.getElementById("monitor-cancel-edit-btn");
+  if (cancelBtn) cancelBtn.hidden = true;
+  const formTitle = document.getElementById("monitor-form-title");
+  if (formTitle) formTitle.textContent = "Add Monitor";
+  const formCard = document.getElementById("monitor-form-card");
+  if (formCard) formCard.classList.remove("editing");
+
+  renderMonitors(); // clear the editing highlight
+};
+
 const handleMonitorFormSubmit = async (e) => {
   e.preventDefault();
   const url = document.getElementById("monitor-url").value.trim();
   if (!url) return;
+  if (!selectedMonitorJfLibrary?.id) {
+    showToast("Select a Jellyfin library first — monitors need one", "error");
+    return;
+  }
   const btn = document.getElementById("monitor-submit-btn");
+  const isEdit = !!editingMonitorId;
   btn.disabled = true;
-  btn.textContent = "Adding…";
+  btn.textContent = isEdit ? "Saving…" : "Adding…";
+
+  const schedule = monitorScheduleEl?.value || "daily";
+  const payload = {
+    url,
+    schedule,
+    schedule_time: monitorTimeEl?.value || "03:00",
+    schedule_day: schedule === "weekly" ? Number(monitorDayEl?.value ?? 0) : null,
+    resolution_override: document.getElementById("monitor-res").value,
+    jellyfin_library_id: selectedMonitorJfLibrary?.id ?? null,
+    jellyfin_library_name: selectedMonitorJfLibrary?.name ?? null,
+    jellyfin_library_path: selectedMonitorJfLibrary?.path ?? null,
+    jellyfin_library_type: selectedMonitorJfLibrary?.type ?? null,
+    include_playlist_index: els.monitorPlaylistIndexCheckbox().checked,
+  };
+
   try {
-    const resp = await fetch("/api/monitors", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        url,
-        schedule: document.getElementById("monitor-schedule").value,
-        schedule_time: document.getElementById("monitor-time").value || "03:00",
-        resolution_override: document.getElementById("monitor-res").value,
-        jellyfin_library_id: selectedMonitorJfLibrary?.id ?? null,
-        jellyfin_library_name: selectedMonitorJfLibrary?.name ?? null,
-        jellyfin_library_path: selectedMonitorJfLibrary?.path ?? null,
-        jellyfin_library_type: selectedMonitorJfLibrary?.type ?? null,
-        include_playlist_index: els.monitorPlaylistIndexCheckbox().checked,
-      }),
-    });
+    const resp = isEdit
+      ? await fetch(`/api/monitors/${editingMonitorId}`, {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(payload),
+        })
+      : await fetch("/api/monitors", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(payload),
+        });
     if (resp.ok) {
       const m = await resp.json();
       monitors = [...monitors.filter((x) => x.id !== m.id), m];
       renderMonitors();
-      document.getElementById("monitor-url").value = "";
-      selectedMonitorJfLibrary = null;
-      const btnText = document.getElementById("monitor-jellyfin-btn-text");
-      if (btnText) btnText.textContent = "Save to Jellyfin";
-      showToast("Monitor added!", "success");
+      showToast(isEdit ? "Monitor updated!" : "Monitor added!", "success");
+      cancelEditMonitor();
     } else {
       const err = await resp.json().catch(() => ({}));
-      showToast(err.detail || "Failed to add monitor", "error");
+      showToast(err.detail || "Failed to save monitor", "error");
     }
   } catch {
     showToast("Network error", "error");
   } finally {
     btn.disabled = false;
-    btn.textContent = "+ Add Monitor";
+    btn.textContent = editingMonitorId ? "Save changes" : "+ Add Monitor";
   }
 };
 
 const handleMonitorListClick = async (e) => {
   const runBtn = e.target.closest(".btn-monitor-run");
+  const editBtn = e.target.closest(".btn-monitor-edit");
   const removeBtn = e.target.closest(".btn-remove");
-  const id = runBtn?.dataset.id || removeBtn?.dataset.id;
+  const id = runBtn?.dataset.id || editBtn?.dataset.id || removeBtn?.dataset.id;
   if (!id) return;
 
+  if (editBtn) {
+    const m = monitors.find((x) => x.id === id);
+    if (m) startEditMonitor(m);
+    return;
+  }
   if (runBtn) {
     runBtn.disabled = true;
     try {
@@ -1152,6 +1366,7 @@ const handleMonitorListClick = async (e) => {
       await fetch(`/api/monitors/${id}`, { method: "DELETE" });
       monitors = monitors.filter((m) => m.id !== id);
       renderMonitors();
+      if (editingMonitorId === id) cancelEditMonitor();
     } catch {
       showToast("Failed to remove", "error");
     }
@@ -1199,7 +1414,7 @@ document.addEventListener("DOMContentLoaded", () => {
   if (monitorForm)
     monitorForm.addEventListener("submit", handleMonitorFormSubmit);
   // Populate time dropdown with locale-formatted hours
-  const monitorTimeEl = document.getElementById("monitor-time");
+  monitorTimeEl = document.getElementById("monitor-time");
   if (monitorTimeEl) {
     for (let h = 0; h < 24; h++) {
       const d = new Date();
@@ -1217,14 +1432,20 @@ document.addEventListener("DOMContentLoaded", () => {
     }
   }
 
-  const monitorScheduleEl = document.getElementById("monitor-schedule");
-  const syncTimeVisibility = () => {
-    if (monitorTimeEl)
-      monitorTimeEl.hidden = monitorScheduleEl?.value !== "daily";
-  };
+  monitorDayEl = document.getElementById("monitor-day");
+  if (monitorDayEl) {
+    // Default to today's weekday (JS getDay(): Sun=0…Sat=6 → our Mon=0…Sun=6)
+    monitorDayEl.value = String((new Date().getDay() + 6) % 7);
+  }
+
+  monitorScheduleEl = document.getElementById("monitor-schedule");
   if (monitorScheduleEl) {
-    monitorScheduleEl.addEventListener("change", syncTimeVisibility);
-    syncTimeVisibility(); // set initial state
+    monitorScheduleEl.addEventListener("change", syncMonitorScheduleFieldsVisibility);
+    syncMonitorScheduleFieldsVisibility(); // set initial state
+  }
+  const monitorCancelEditBtn = document.getElementById("monitor-cancel-edit-btn");
+  if (monitorCancelEditBtn) {
+    monitorCancelEditBtn.addEventListener("click", cancelEditMonitor);
   }
   const monitorJfToggle = document.getElementById("monitor-jellyfin-toggle");
   if (monitorJfToggle) {

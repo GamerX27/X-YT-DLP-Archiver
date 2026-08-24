@@ -10,8 +10,6 @@ services:
       - downloads_tmp:/app/tmp_downloads
       # Persist monitor list across rebuilds
       - monitors_data:/app/monitors_data
-      # Final media destination on the host
-      - ${MEDIA_PATH:-./media_output}:/media
       # Jellyfin media root — mounted at the same path so Jellyfin API paths
       # work directly inside the container without any remapping.
       # Set JELLYFIN_MEDIA_PATH in .env (e.g. JELLYFIN_MEDIA_PATH=/mnt/Media).

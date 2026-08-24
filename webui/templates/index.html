@@ -9,7 +9,7 @@
         <link rel="alternate icon" href="/static/favicon.ico" />
         <link rel="apple-touch-icon" href="/static/apple-touch-icon.png" />
         <link rel="manifest" href="/static/site.webmanifest" />
-        <link rel="stylesheet" href="/static/css/style.css?v=13" />
+        <link rel="stylesheet" href="/static/css/style.css?v=16" />
     </head>
     <body>
         <header>
@@ -35,9 +35,9 @@
             <!-- Tab navigation -->
             <nav class="tab-nav">
                 <button class="tab-btn active" data-tab="downloads">
-                    ⬇ Downloads
+                    Downloads
                 </button>
-                <button class="tab-btn" data-tab="monitor">⏱ Monitor</button>
+                <button class="tab-btn" data-tab="monitor" id="monitor-tab-btn" hidden>Monitor</button>
             </nav>
 
             <div class="tab-pane" id="tab-downloads">
@@ -55,17 +55,18 @@
                                 autocomplete="off"
                             />
                             <button type="submit" id="submit-btn" disabled>
-                                <span class="btn-icon">⬇</span>
                                 Download
                             </button>
                         </div>
 
                         <!-- Video preview strip (shown after successful probe) -->
                         <div class="probe-info" id="probe-info" hidden>
-                            <span
-                                class="probe-type-icon"
-                                id="probe-type-icon"
-                            ></span>
+                            <img
+                                class="probe-thumb"
+                                id="probe-thumb"
+                                alt=""
+                                hidden
+                            />
                             <div class="probe-info-text">
                                 <span
                                     class="probe-title"
@@ -90,42 +91,54 @@
                             </div>
 
                             <div class="res-buttons" id="res-buttons" hidden>
-                                <button
-                                    type="button"
-                                    class="res-btn"
-                                    data-res="720p"
-                                    id="res-btn-720p"
-                                >
-                                    <span class="res-main">720p</span>
-                                    <span class="res-sub">HD</span>
-                                </button>
-                                <button
-                                    type="button"
-                                    class="res-btn"
-                                    data-res="1080p"
-                                    id="res-btn-1080p"
-                                >
-                                    <span class="res-main">1080p</span>
-                                    <span class="res-sub">Full HD</span>
-                                </button>
-                                <button
-                                    type="button"
-                                    class="res-btn"
-                                    data-res="1440p"
-                                    id="res-btn-1440p"
-                                >
-                                    <span class="res-main">1440p</span>
-                                    <span class="res-sub">QHD</span>
-                                </button>
-                                <button
-                                    type="button"
-                                    class="res-btn"
-                                    data-res="2160p"
-                                    id="res-btn-2160p"
-                                >
-                                    <span class="res-main">4K</span>
-                                    <span class="res-sub">Ultra HD</span>
-                                </button>
+                                <div class="res-quality-group">
+                                    <button
+                                        type="button"
+                                        class="res-btn"
+                                        data-res="720p"
+                                        id="res-btn-720p"
+                                    >
+                                        <span class="res-main">720p</span>
+                                        <span class="res-sub">HD</span>
+                                    </button>
+                                    <button
+                                        type="button"
+                                        class="res-btn"
+                                        data-res="1080p"
+                                        id="res-btn-1080p"
+                                    >
+                                        <span class="res-main">1080p</span>
+                                        <span class="res-sub">Full HD</span>
+                                    </button>
+                                    <button
+                                        type="button"
+                                        class="res-btn"
+                                        data-res="1440p"
+                                        id="res-btn-1440p"
+                                    >
+                                        <span class="res-main">1440p</span>
+                                        <span class="res-sub">QHD</span>
+                                    </button>
+                                    <button
+                                        type="button"
+                                        class="res-btn"
+                                        data-res="2160p"
+                                        id="res-btn-2160p"
+                                    >
+                                        <span class="res-main">4K</span>
+                                        <span class="res-sub">Ultra HD</span>
+                                    </button>
+                                </div>
+                                <div class="res-audio-group">
+                                    <button
+                                        type="button"
+                                        class="res-btn res-btn-audio"
+                                        data-res="audio"
+                                        id="res-btn-audio"
+                                    >
+                                        Audio only
+                                    </button>
+                                </div>
                             </div>
                             <div
                                 class="audio-mode-row"
@@ -133,7 +146,7 @@
                                 hidden
                             >
                                 <span class="audio-mode-badge"
-                                    >♪ Audio · Best quality MP3</span
+                                    >Audio · Best quality MP3</span
                                 >
                             </div>
                         </div>
@@ -175,8 +188,8 @@
                                 <span
                                     class="jellyfin-chevron"
                                     id="jellyfin-chevron"
-                                    >▾</span
-                                >
+                                    aria-hidden="true"
+                                ></span>
                             </button>
 
                             <!-- Library picker (expands when toggle is ON) -->
@@ -204,7 +217,7 @@
                                             id="folder-browser-back"
                                             hidden
                                         >
-                                            ◁ Back
+                                            Back
                                         </button>
                                         <span
                                             class="folder-browser-path"
@@ -215,13 +228,13 @@
                                             id="folder-browser-default"
                                             title="Use this folder automatically when a YouTube Music link is pasted"
                                         >
-                                            ☆ Set as default
+                                            Set as default
                                         </button>
                                         <button
                                             class="folder-browser-clear"
                                             id="folder-browser-clear"
                                         >
-                                            ✕ Use auto folder
+                                            Use auto folder
                                         </button>
                                     </div>
                                     <div
@@ -277,8 +290,8 @@
 
             <!-- Monitor tab -->
             <div class="tab-pane" id="tab-monitor" hidden>
-                <section class="card">
-                    <h2>Add Monitor</h2>
+                <section class="card" id="monitor-form-card">
+                    <h2 id="monitor-form-title">Add Monitor</h2>
                     <form id="monitor-form">
                         <div class="input-row">
                             <input
@@ -302,6 +315,19 @@
                                         Daily at
                                     </option>
                                     <option value="weekly">Weekly</option>
+                                </select>
+                                <select
+                                    id="monitor-day"
+                                    class="monitor-field-select"
+                                    hidden
+                                >
+                                    <option value="0">Monday</option>
+                                    <option value="1">Tuesday</option>
+                                    <option value="2">Wednesday</option>
+                                    <option value="3">Thursday</option>
+                                    <option value="4">Friday</option>
+                                    <option value="5">Saturday</option>
+                                    <option value="6">Sunday</option>
                                 </select>
                                 <select
                                     id="monitor-time"
@@ -342,7 +368,7 @@
                                 <span id="monitor-jellyfin-btn-text"
                                     >Save to Jellyfin</span
                                 >
-                                <span class="jellyfin-chevron">▾</span>
+                                <span class="jellyfin-chevron" aria-hidden="true"></span>
                             </button>
                             <div
                                 class="jellyfin-picker"
@@ -368,13 +394,23 @@
                             </label>
                         </div>
 
-                        <button
-                            type="submit"
-                            class="btn-primary"
-                            id="monitor-submit-btn"
-                        >
-                            + Add Monitor
-                        </button>
+                        <div class="monitor-form-actions">
+                            <button
+                                type="submit"
+                                class="btn-primary"
+                                id="monitor-submit-btn"
+                            >
+                                + Add Monitor
+                            </button>
+                            <button
+                                type="button"
+                                class="btn-ghost"
+                                id="monitor-cancel-edit-btn"
+                                hidden
+                            >
+                                Cancel edit
+                            </button>
+                        </div>
                     </form>
                 </section>
 
@@ -418,16 +454,16 @@
                     <div class="task-actions">
                         <span class="task-status-badge"></span>
                         <button class="btn-retry" title="Retry download" hidden>
-                            ↺ Retry
+                            Retry
                         </button>
                         <button
                             class="btn-cancel"
                             title="Cancel download"
                             hidden
                         >
-                            ✕ Cancel
+                            Cancel
                         </button>
-                        <button class="btn-remove" title="Remove">✕</button>
+                        <button class="btn-remove" title="Remove">Remove</button>
                     </div>
                 </div>
                 <div class="task-title"></div>
@@ -446,6 +482,6 @@
             </div>
         </template>
 
-        <script src="/static/js/app.js?v=12"></script>
+        <script src="/static/js/app.js?v=15"></script>
     </body>
 </html>

@@ -42,6 +42,28 @@ def _next_run(monitor: Dict[str, Any]) -> datetime:
             candidate += timedelta(days=1)
         return candidate
 
+    if schedule == "weekly":
+        time_str = monitor.get("schedule_time", "03:00")
+        try:
+            h, m = map(int, time_str.split(":"))
+        except ValueError:
+            h, m = 3, 0
+        # schedule_day: 0=Monday … 6=Sunday (matches datetime.weekday()).
+        # Falls back to a plain +7 days if the user hasn't picked a day yet.
+        day = monitor.get("schedule_day")
+        try:
+            day = int(day)
+        except (TypeError, ValueError):
+            day = None
+        if day is None:
+            return now + timedelta(weeks=1)
+        day = max(0, min(6, day))
+        candidate = now.replace(hour=h, minute=m, second=0, microsecond=0)
+        candidate += timedelta(days=(day - candidate.weekday()) % 7)
+        if candidate <= now:
+            candidate += timedelta(days=7)
+        return candidate
+
     delta = _SCHEDULE_DELTA.get(schedule, timedelta(days=1))
     return now + delta
 
@@ -98,9 +120,14 @@ class MonitorStore:
     def update(self, monitor_id: str, **kwargs) -> Optional[Dict[str, Any]]:
         if monitor_id not in self._monitors:
             return None
-        self._monitors[monitor_id].update(kwargs)
+        monitor = self._monitors[monitor_id]
+        monitor.update(kwargs)
+        # Editing the schedule itself should immediately retarget next_run,
+        # not wait for the next scheduled run to notice the change.
+        if {"schedule", "schedule_time", "schedule_day"} & kwargs.keys():
+            monitor["next_run"] = _next_run(monitor).isoformat()
         self._save()
-        return self._monitors[monitor_id]
+        return monitor
 
     def remove(self, monitor_id: str) -> bool:
         if monitor_id not in self._monitors:

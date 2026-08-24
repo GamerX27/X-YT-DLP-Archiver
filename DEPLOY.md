@@ -25,11 +25,10 @@ Open `.env` and configure it. **All variables below should be present**:
 
 ```env
 # ── Required ──────────────────────────────────────────────────────────────────────
-MEDIA_PATH=/mnt/Media          # host path for normal (non-Jellyfin) downloads
 WEBUI_PORT=3050
 MAX_CONCURRENT_DOWNLOADS=2
 
-# ── Jellyfin integration (optional) ─────────────────────────────────────────
+# ── Jellyfin integration (required for the Monitor tab; optional otherwise) ──
 # JELLYFIN_URL         — full URL of your Jellyfin server, e.g. http://192.168.1.10:8096
 # JELLYFIN_API_KEY     — API key from Jellyfin dashboard → Admin → API Keys
 # JELLYFIN_MEDIA_PATH  — the base media path that Jellyfin uses on this host
@@ -47,9 +46,10 @@ JELLYFIN_MEDIA_PATH=/mnt/Media
 > Jellyfin libraries. The container will be able to write to any sub-path
 > beneath it (e.g. `/mnt/Media/Movies`, `/mnt/Media/TV Shows`).
 > Leave the three `JELLYFIN_*` variables commented out or empty to disable
-> the Jellyfin integration entirely — the toggle won't appear in the UI.
+> the Jellyfin integration — the destination picker and the Monitor tab
+> won't appear in the UI, and ad-hoc downloads save straight to your browser.
 
-Make sure the media directories exist and are writable:
+Make sure the Jellyfin media directory exists and is writable (skip if you're not using Jellyfin):
 
 ```bash
 mkdir -p /mnt/Media
@@ -178,7 +178,7 @@ Look for the last error before the web server stopped responding.
 
 ```bash
 cp .env.example .env
-# Edit MEDIA_PATH, then:
+# Edit the JELLYFIN_* variables if you want the Monitor tab, then:
 make up
 ```
 
@@ -198,11 +198,11 @@ Then `make rebuild`.
 
 ### Downloads fail with `HTTP Error 403: Forbidden`
 
-This happens when the YouTube player client yt-dlp used to extract the media doesn't have a valid PO Token for the actual download step. The container defaults to the `android` client, which doesn't need one. If it starts happening again, try another client (or a combination) via `.env`:
+This happens when the YouTube player client yt-dlp used to extract the media doesn't have a valid PO Token for the actual download step. By default the container leaves `YOUTUBE_PLAYER_CLIENT` unset and lets yt-dlp pick its own client(s); if it starts failing, pin it to a specific client via `.env`:
 
 ```env
-YOUTUBE_PLAYER_CLIENT=android
-# or: YOUTUBE_PLAYER_CLIENT=android,web
+YOUTUBE_PLAYER_CLIENT=web
+# or a combination: YOUTUBE_PLAYER_CLIENT=android,web
 ```
 
 Then `make restart` (no rebuild needed).
@@ -217,7 +217,7 @@ Look for a log line like:
 WARNING  downloader — Downloaded below requested quality: got 360p, requested 1080p for '...'
 ```
 
-This means yt-dlp's `android` client had no usable URL for anything above 360p for that video — usually YouTube trialing a "SABR-only" streaming experiment against that client, which strips URLs from most formats and leaves only a legacy muxed 360p stream. The app's format selection isn't at fault; there was nothing higher-resolution for it to pick.
+This means the player client yt-dlp used had no usable URL for anything above 360p for that video — usually YouTube trialing a "SABR-only" streaming experiment against that client, which strips URLs from most formats and leaves only a legacy muxed 360p stream. The app's format selection isn't at fault; there was nothing higher-resolution for it to pick.
 
 Two fixes, same as the 403 case above:
 
@@ -225,9 +225,9 @@ Two fixes, same as the 403 case above:
    ```bash
    make update-yt-dlp
    ```
-2. **Add a fallback player client** in `.env` so a SABR-restricted `android` session falls back to one that still serves full-resolution URLs:
+2. **Pin a player client** in `.env` that still serves full-resolution URLs for you (this varies over time as YouTube adjusts which clients it restricts):
    ```env
-   YOUTUBE_PLAYER_CLIENT=android,web
+   YOUTUBE_PLAYER_CLIENT=web
    ```
    Then `make restart`.
 
@@ -256,7 +256,12 @@ YouTube's bot detection. Fixes in order of effort:
 
 ---
 
-### Media files not appearing at `MEDIA_PATH`
+### Media files not appearing in Jellyfin
+
+> Ad-hoc downloads from the Downloads tab (no Jellyfin destination selected)
+> never touch the server's disk — they stage the file in the container and
+> hand it to your browser to save. Check that "Save to device" fired instead.
+> Only playlist **monitors** write to a Jellyfin library on disk.
 
 ```bash
 # Check the volume mount
@@ -264,7 +269,7 @@ docker inspect ytdlp-downloader \
   --format '{{range .Mounts}}{{.Source}} → {{.Destination}}{{"\n"}}{{end}}'
 
 # Check permissions
-ls -la /mnt/Media   # replace with your path
+ls -la /mnt/Media   # replace with your JELLYFIN_MEDIA_PATH
 
 # Fix permissions if needed
 sudo chown -R $USER:$USER /mnt/Media

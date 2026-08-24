@@ -55,8 +55,14 @@ shell:
 	docker exec -it $(CONTAINER) bash
 
 update-yt-dlp:
-	@echo "Upgrading yt-dlp inside the running container..."
-	docker exec $(CONTAINER) /app/venv/bin/pip install --upgrade yt-dlp yt-dlp-ejs
+	@BRANCH=$$(grep -E '^YTDLP_BRANCH=' .env 2>/dev/null | cut -d= -f2 | tr '[:upper:]' '[:lower:]'); \
+	if [ "$$BRANCH" = "nightly" ]; then \
+		echo "Upgrading yt-dlp inside the running container (nightly channel)..."; \
+		docker exec $(CONTAINER) /app/venv/bin/pip install --upgrade --pre yt-dlp yt-dlp-ejs; \
+	else \
+		echo "Upgrading yt-dlp inside the running container (stable channel)..."; \
+		docker exec $(CONTAINER) /app/venv/bin/pip install --upgrade yt-dlp yt-dlp-ejs; \
+	fi
 	@echo "Restarting web server to pick up the new version..."
 	$(COMPOSE) restart
 
