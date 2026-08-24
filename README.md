@@ -172,4 +172,4 @@ When a Jellyfin library is selected the folder structure follows the library typ
 
 ## Format Planning Rules
 
-All download planning lives in [`webui/format_planner.py`](webui/format_planner.py)  pure Python, no external service or model involved. To change format selection, codec preferences, or folder layout, edit the methods there directly (`_format_from_resolution`, `_folder_from_summary`, `_folder_for_jellyfin`). Changes take effect on container restart.
+All download planning lives in [`webui/format_planner.py`](webui/format_planner.py)  Powerd by Python. To change format selection, codec preferences, or folder layout, edit the methods there directly (`_format_from_resolution`, `_folder_from_summary`, `_folder_for_jellyfin`). Changes take effect on container restart.
