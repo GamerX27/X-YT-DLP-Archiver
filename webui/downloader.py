@@ -77,6 +77,9 @@ _RESOLUTION_TARGET_HEIGHT = {
 _NON_BROWSABLE_LIST_PREFIXES = ("RD", "UL", "MM")
 
 
+_SHOW_PATH_RE = re.compile(r"^/show/([\w-]+)/?$")
+
+
 def normalize_playlist_url(url: str) -> str:
     """Rewrite a YouTube *watch* URL that carries a ``list=`` parameter into the
     canonical ``/playlist?list=<id>`` form.
@@ -90,6 +93,13 @@ def normalize_playlist_url(url: str) -> str:
     The dedicated playlist tab (``/playlist?list=<id>``) returns *every* entry,
     so for real (browsable) playlists we redirect to it. Mixes/radios (``RD``…,
     which have no static page) are left untouched.
+
+    Also rewrites YouTube "Show" URLs (``/show/VL<id>``, e.g. from the "Shows"
+    shelf). yt-dlp's tab extractor doesn't recognize ``/show/`` as a path
+    prefix — it treats "show" itself as a channel handle and the ``VL<id>``
+    segment as a sub-tab, so the resulting metadata is a placeholder with
+    ``title == "show"`` instead of the actual show title. Stripping the "VL"
+    browse-id prefix and using the canonical playlist URL fixes this.
     """
     try:
         parsed = urlparse(url)
@@ -99,6 +109,21 @@ def normalize_playlist_url(url: str) -> str:
     host = (parsed.hostname or "").lower()
     if not (host.endswith("youtube.com") or host == "youtu.be"):
         return url
+
+    show_match = _SHOW_PATH_RE.match(parsed.path)
+    if show_match:
+        show_id = show_match.group(1)
+        if show_id.startswith("VL"):
+            show_id = show_id[2:]
+        new_url = f"https://www.youtube.com/playlist?{urlencode({'list': show_id})}"
+        logger.info(
+            "Normalized YouTube Show URL to full playlist URL so the real "
+            "title is fetched (yt-dlp otherwise reports the literal title "
+            "\"show\"): %s → %s",
+            url,
+            new_url,
+        )
+        return new_url
 
     list_ids = parse_qs(parsed.query).get("list")
     if not list_ids:
