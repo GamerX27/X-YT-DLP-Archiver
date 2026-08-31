@@ -736,14 +736,10 @@ async def process_task(task_id: str) -> None:
             except OSError as exc:
                 logger.warning("Could not commit download archive (non-fatal): %s", exc)
 
-        jf_lib_id = task.get("jellyfin_library_id")
-        if jf_lib_id:
-            try:
-                await jellyfin_client.refresh_library(jf_lib_id)
-                logger.info("Jellyfin library %s refresh triggered", jf_lib_id)
-            except Exception as jf_exc:
-                logger.warning("Jellyfin refresh failed (non-fatal): %s", jf_exc)
-
+        # Reorder before triggering the library scan below — Jellyfin ingests
+        # each file's date at scan time, so fixing mtimes after the scan has
+        # already run leaves the wrong order cached in Jellyfin's database
+        # until some later, unrelated rescan happens to pick it up.
         if (
             plan.get("content_type") == "playlist"
             and task.get("jellyfin_library_path")
@@ -760,6 +756,14 @@ async def process_task(task_id: str) -> None:
                 logger.warning(
                     "Jellyfin episode reordering failed (non-fatal): %s", exc
                 )
+
+        jf_lib_id = task.get("jellyfin_library_id")
+        if jf_lib_id:
+            try:
+                await jellyfin_client.refresh_library(jf_lib_id)
+                logger.info("Jellyfin library %s refresh triggered", jf_lib_id)
+            except Exception as jf_exc:
+                logger.warning("Jellyfin refresh failed (non-fatal): %s", jf_exc)
 
         update_task(
             task_id,
