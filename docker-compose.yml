@@ -1,7 +1,8 @@
 services:
   ytdlp-downloader:
     build:
-      context: ./webui
+      context: .
+      dockerfile: docker/Dockerfile
     container_name: ytdlp-downloader
     env_file:
       - .env

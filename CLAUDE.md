@@ -21,9 +21,9 @@ plain Python rules driven off yt-dlp's own probed metadata.
 - **No test suite.** Verify changes by syntax-checking and exercising the
   running container — this is how changes were verified during development:
   ```
-  python3 -m py_compile webui/*.py
+  python3 -m py_compile backend/*.py backend/routes/*.py
   node --check webui/static/js/app.js
-  bash -n webui/docker-entrypoint.sh
+  bash -n docker/docker-entrypoint.sh
   docker compose up -d --build
   ```
   then actually drive it: `curl http://localhost:3050/api/health`, probe/
@@ -35,64 +35,89 @@ plain Python rules driven off yt-dlp's own probed metadata.
 
 ## Architecture
 
-**Request flow**: `webui/main.py` (FastAPI routes + WebSocket `/ws`) is the
-only entrypoint. A download becomes a `task` dict broadcast to every
-connected client over the WebSocket as it moves through
+The source tree splits into three top-level folders: `backend/` (all Python),
+`webui/` (frontend: `static/` + `templates/`, no build step), and `docker/`
+(`Dockerfile` + `docker-entrypoint.sh`). At container build time the
+Dockerfile copies `backend/` and `webui/static`+`webui/templates` into a
+single flat `/app` — so at runtime the app sees the same layout it always
+has (`/app/main.py`, `/app/static`, `/app/templates`, etc.); only the
+*source-tree* organization is split, not the running app.
+
+**Request flow**: `backend/main.py` builds the `FastAPI` app (lifespan,
+static mount, `include_router`) but the routes themselves live in
+`backend/routes/` (one module per concern: `pages.py`, `downloads.py`,
+`monitors.py`, `jellyfin.py`, `settings.py`, `health.py`, `ws.py` for the
+WebSocket `/ws`), aggregated into one `api_router` in `backend/routes/__init__.py`.
+A download becomes a `task` dict broadcast to every connected client over the
+WebSocket as it moves through
 `pending → probing → analyzing → downloading → moving/finalizing →
 completed`; the frontend has no REST polling, it's entirely event-driven off
 these broadcasts (see `updateTask`/the `ws.addEventListener("message", …)`
 switch in `webui/static/js/app.js`). An `asyncio.Queue` + fixed-size worker
-pool (`MAX_CONCURRENT_DOWNLOADS`) run `process_task()` for each queued task.
+pool (`MAX_CONCURRENT_DOWNLOADS`, both in `backend/state.py`) run
+`process_task()` (`backend/pipeline.py`) for each queued task. Shared
+in-memory state (`tasks`, `ws_clients`, the task queue, the singleton
+`downloader`/`format_planner`/`jellyfin_client`/`monitor_store`/
+`settings_store` instances, `broadcast()`/`update_task()`) all live in
+`backend/state.py` and are imported by every other backend module.
 
-**The pipeline inside `process_task()`**: probe the URL with
-`downloader.probe_url()` → `format_planner.analyze()` turns that metadata
-into a format string + output template + destination folder (pure rules in
-`webui/format_planner.py`: `_format_from_resolution`, `_folder_from_summary`,
-`_folder_for_jellyfin` — no external service, edit these directly to change
-codec/resolution/folder-layout rules) → `downloader.download()` runs yt-dlp
-with progress callbacks → destination-specific finish step.
+**The pipeline inside `process_task()`** (`backend/pipeline.py`): probe the
+URL with `downloader.probe_url()` → `format_planner.analyze()` turns that
+metadata into a format string + output template + destination folder (pure
+rules in `backend/format_planner.py`: `_format_from_resolution`,
+`_folder_from_summary`, `_folder_for_jellyfin` — no external service, edit
+these directly to change codec/resolution/folder-layout rules) →
+`downloader.download()` runs yt-dlp with progress callbacks →
+destination-specific finish step.
 
 **Three destinations a task can end up at**, decided per-task in
 `process_task()`:
 1. **Jellyfin library** — moved into the library path, Jellyfin scan
-   triggered (`webui/jellyfin.py`), TV-type playlists get their mtimes
+   triggered (`backend/jellyfin.py`), TV-type playlists get their mtimes
    reordered to match playlist order afterward.
 2. **Monitor** (`task["monitor_id"]` set) — same as Jellyfin above; monitors
    are *required* to have a Jellyfin destination (enforced both in the
-   `/api/monitors` POST/PATCH handlers and in the frontend before it lets
-   you submit the form) because a monitor runs unattended on a schedule and
-   there's no browser session to hand a finished file to.
+   `/api/monitors` POST/PATCH handlers in `backend/routes/monitors.py` and
+   in the frontend before it lets you submit the form) because a monitor
+   runs unattended on a schedule and there's no browser session to hand a
+   finished file to.
 3. **Browser download** (no Jellyfin destination selected, not a monitor) —
    the file is never written to server disk long-term. It's staged under
    `DOWNLOADS_DIR/<task_id>/`, zipped if it's a playlist
-   (`_prepare_browser_download` in `main.py`), and served through
-   `GET /api/tasks/{id}/file`; the frontend auto-triggers the save via a
-   synthetic `<a download>` click the moment the task completes (see
+   (`_prepare_browser_download` in `backend/pipeline.py`), and served
+   through `GET /api/tasks/{id}/file`; the frontend auto-triggers the save
+   via a synthetic `<a download>` click the moment the task completes (see
    `autoSaveToDevice` in `app.js`) — no button, no user action needed. A
-   `cleanup_scheduler` background loop expires unclaimed staged files after
-   `BROWSER_DOWNLOAD_TTL_HOURS`.
+   `cleanup_scheduler` background loop (`backend/schedulers.py`) expires
+   unclaimed staged files after `BROWSER_DOWNLOAD_TTL_HOURS`.
 
 **Playlist resume/skip logic**: for playlist downloads, `download_archive`
 tracks already-fetched video IDs. There's a *staging* archive (in the task's
 temp dir, always used, so a long playlist can resume across multiple yt-dlp
-passes within the same run — `_download_with_resume` in `main.py`) and,
-only for Jellyfin/monitor destinations, a *persistent* archive committed to
-the destination folder after a successful move (so a later run of the same
-monitor/playlist skips what's already there). Browser downloads only get the
-staging archive — there's no persistent destination to seed from or commit
-to.
+passes within the same run — `_download_with_resume` in
+`backend/pipeline.py`) and, only for Jellyfin/monitor destinations, a
+*persistent* archive committed to the destination folder after a successful
+move (so a later run of the same monitor/playlist skips what's already
+there). Browser downloads only get the staging archive — there's no
+persistent destination to seed from or commit to.
 
-**Other backend modules**: `webui/monitor.py` is a small JSON-file-backed
-store (`MonitorStore`) plus the schedule math (`_next_run` — handles hourly/
-6h/12h/daily/weekly-with-a-specific-weekday) for the playlist-monitor
-scheduler that runs in `main.py`'s `monitor_scheduler` background loop.
-`webui/settings.py` is a generic key/value JSON store, currently used only
-for the "default folder for YouTube Music links" setting. `webui/jellyfin.py`
-also does host-path translation between the path Jellyfin's API reports and
-the path this container actually has that library mounted at
-(`JELLYFIN_MEDIA_PATH`).
+**Other backend modules**: `backend/monitors.py` holds the monitor
+URL-matching helpers and `run_monitor()` (checks a playlist for new videos
+and enqueues a task); `backend/schedulers.py` is the two background loops
+(`monitor_scheduler` — polls `monitor.py`'s `MonitorStore.due()` every 60s
+and calls `run_monitor()`; `cleanup_scheduler` — the browser-download TTL
+sweep above). `backend/monitor.py` is a small JSON-file-backed store
+(`MonitorStore`) plus the schedule math (`_next_run` — handles hourly/
+6h/12h/daily/weekly-with-a-specific-weekday). `backend/settings.py` is a
+generic key/value JSON store, currently used only for the "default folder
+for YouTube Music links" setting. `backend/jellyfin.py` also does host-path
+translation between the path Jellyfin's API reports and the path this
+container actually has that library mounted at (`JELLYFIN_MEDIA_PATH`).
+`backend/disk.py` holds the disk-space helpers (`free_disk_mb`,
+`is_disk_full`, `count_archive_entries`) used by both the pipeline and the
+`/api/health` route.
 
-**yt-dlp self-update** (`webui/docker-entrypoint.sh`): re-checks for a new
+**yt-dlp self-update** (`docker/docker-entrypoint.sh`): re-checks for a new
 yt-dlp release at every container start, then keeps re-checking on an
 interval in a background loop for as long as the container runs
 (`YTDLP_BRANCH=stable` → weekly, `nightly` → daily + pre-release builds).

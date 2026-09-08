@@ -107,7 +107,7 @@ An ad-hoc download always saves straight to your browser as a file  there's no s
 
 1. **Paste a URL.** For `music.youtube.com` the UI switches to Audio mode automatically.
 2. **yt-dlp probes the URL** to fetch metadata: title, channel, playlist info, available resolutions and codecs.
-3. **`FormatPlanner` computes a plan** from that metadata: a format string, output template, and destination folder, using fixed resolution/codec rules (see [`webui/format_planner.py`](webui/format_planner.py)).
+3. **`FormatPlanner` computes a plan** from that metadata: a format string, output template, and destination folder, using fixed resolution/codec rules (see [`backend/format_planner.py`](backend/format_planner.py)).
 4. **yt-dlp executes the plan.** Progress streams to the browser in real time.
 5. **Post-processing:** thumbnail and metadata are embedded via mutagen; files are moved to the final destination.
 6. **Jellyfin scan** is triggered automatically if a Jellyfin library was selected.
@@ -172,4 +172,4 @@ When a Jellyfin library is selected the folder structure follows the library typ
 
 ## Format Planning Rules
 
-All download planning lives in [`webui/format_planner.py`](webui/format_planner.py)  Powerd by Python. To change format selection, codec preferences, or folder layout, edit the methods there directly (`_format_from_resolution`, `_folder_from_summary`, `_folder_for_jellyfin`). Changes take effect on container restart.
+All download planning lives in [`backend/format_planner.py`](backend/format_planner.py)  Powerd by Python. To change format selection, codec preferences, or folder layout, edit the methods there directly (`_format_from_resolution`, `_folder_from_summary`, `_folder_for_jellyfin`). Changes take effect on container restart.

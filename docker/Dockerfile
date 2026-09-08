@@ -17,15 +17,17 @@ WORKDIR /app
 RUN python -m venv /app/venv
 ENV PATH="/app/venv/bin:$PATH"
 
-COPY requirements.txt .
+COPY backend/requirements.txt .
 RUN pip install --no-cache-dir --upgrade pip && \
     pip install --no-cache-dir --upgrade -r requirements.txt
 
-COPY . .
+COPY backend/ .
+COPY webui/static ./static
+COPY webui/templates ./templates
 
 RUN mkdir -p /app/tmp_downloads
 
-COPY docker-entrypoint.sh /entrypoint.sh
+COPY docker/docker-entrypoint.sh /entrypoint.sh
 RUN chmod +x /entrypoint.sh
 
 EXPOSE 3050
