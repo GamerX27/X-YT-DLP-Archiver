@@ -3,6 +3,11 @@ name: Build and publish image
 on:
   push:
     branches: [main]
+  schedule:
+    # Weekly check for a new stable yt-dlp release. Skipped (see check-ytdlp
+    # below) if nothing new was published since the last scheduled run — a
+    # real source push or a manual run always builds regardless.
+    - cron: "0 6 * * 1"
   workflow_dispatch:
 
 permissions:
@@ -10,7 +15,51 @@ permissions:
   packages: write
 
 jobs:
+  check-ytdlp:
+    runs-on: ubuntu-latest
+    if: github.event_name == 'schedule'
+    outputs:
+      should_build: ${{ steps.compare.outputs.should_build }}
+    steps:
+      - name: Get latest yt-dlp stable release tag
+        id: latest
+        run: |
+          TAG=$(curl -sf https://api.github.com/repos/yt-dlp/yt-dlp/releases/latest | jq -r .tag_name)
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+
+      - name: Restore last built release tag
+        uses: actions/cache/restore@v4
+        with:
+          path: .yt-dlp-release-tag
+          key: yt-dlp-release-tag-${{ steps.latest.outputs.tag }}
+          restore-keys: yt-dlp-release-tag-
+
+      - name: Compare
+        id: compare
+        run: |
+          LAST=$(cat .yt-dlp-release-tag 2>/dev/null || echo "")
+          echo "Latest release: ${{ steps.latest.outputs.tag }}, last built: $LAST"
+          if [ "$LAST" != "${{ steps.latest.outputs.tag }}" ]; then
+            echo "should_build=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "should_build=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Record release tag for next check
+        if: steps.compare.outputs.should_build == 'true'
+        run: |
+          echo "${{ steps.latest.outputs.tag }}" > .yt-dlp-release-tag
+
+      - name: Save release tag cache
+        if: steps.compare.outputs.should_build == 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: .yt-dlp-release-tag
+          key: yt-dlp-release-tag-${{ steps.latest.outputs.tag }}
+
   build:
+    needs: [check-ytdlp]
+    if: always() && (needs.check-ytdlp.result == 'skipped' || needs.check-ytdlp.outputs.should_build == 'true')
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
