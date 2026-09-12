@@ -2,7 +2,7 @@
 # Pulling the official prebuilt binary avoids a curl|sh install script.
 FROM denoland/deno:bin AS deno
 
-FROM python:3.13-slim-bookworm
+FROM python:3.13-slim-trixie
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
         ffmpeg \
